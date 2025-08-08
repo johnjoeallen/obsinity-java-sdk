@@ -1,4 +1,4 @@
-package com.obsinity.telemetry;
+package com.obsinity.telemetry.annotations;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

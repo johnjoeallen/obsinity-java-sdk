@@ -7,9 +7,10 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.4</version> <!-- change to your target 3.5.x -->
-        <relativePath/> <!-- lookup parent from repository -->
+        <version>3.5.4</version>
+        <relativePath/>
     </parent>
+
     <artifactId>obsinity-java-sdk</artifactId>
     <name>obsinity-java-sdk</name>
     <packaging>jar</packaging>
@@ -18,9 +19,30 @@
         <jackson.version>2.19.2</jackson.version>
         <log4j-api>2.25.1</log4j-api>
         <slf4j-api.version>2.0.17</slf4j-api.version>
+        <aspectjrt.version>1.9.24</aspectjrt.version>
+        <lombok.version>1.18.38</lombok.version>
+        <spring.version>3.5.4</spring.version>
     </properties>
 
     <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjrt</artifactId>
+            <version>${aspectjrt.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-annotations</artifactId>

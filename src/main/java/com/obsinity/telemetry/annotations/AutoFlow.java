@@ -1,4 +1,4 @@
-package com.obsinity.telemetry;
+package com.obsinity.telemetry.annotations;
 
 import org.apache.logging.log4j.spi.StandardLevel;
 
