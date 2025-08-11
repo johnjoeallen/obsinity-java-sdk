@@ -274,13 +274,9 @@ public class TelemetryProcessor {
 		final Instant now = Instant.now();
 		final long unixNanos = telemetryProcessorSupport.unixNanos(now);
 		final long endNanos = System.nanoTime();
-		final long durNanos = startNanos > 0L ? (endNanos - startNanos) : 0L;
 
 		final Map<String, Object> attrs = new LinkedHashMap<>();
-		attrs.put("phase", "finish");
-		attrs.put("duration.nanos", durNanos);
-		attrs.put("class", sig.getDeclaringTypeName());
-		attrs.put("method", sig.getName());
+
 		if (error == null) {
 			attrs.put("result", "success");
 		} else {
