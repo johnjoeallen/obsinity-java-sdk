@@ -82,7 +82,7 @@ Sets default telemetry **kind** and/or OTEL `SpanKind`.
 @Kind(spanKind = SpanKind.CLIENT)
 public class PaymentClient {
     @Flow(name = "payment.charge")
-    public void charge() { ... }
+    public void charge() { /* ... */ }
 }
 ```
 
@@ -172,41 +172,167 @@ When promotion happens:
 
 ---
 
-## Example End-to-End
+## Minimal Spring Boot Sample (with AOP + annotations)
+
+### `Application.java`
 
 ```java
+package com.example.telemetrydemo;
+
+import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.EnableAspectJAutoProxy;
+
+@SpringBootConfiguration
+@EnableAutoConfiguration
+@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
+@ComponentScan // scans com.example.telemetrydemo.*
+public class Application {
+    public static void main(String[] args) {
+        org.springframework.boot.SpringApplication.run(Application.class, args);
+    }
+}
+```
+
+### Demo domain
+
+```java
+package com.example.telemetrydemo.domain;
+
+import java.math.BigDecimal;
+
+public record Payment(String method, BigDecimal amount, String currency) {}
+public record Receipt(String id) {}
+```
+
+### `OrderService.java`
+
+```java
+package com.example.telemetrydemo.service;
+
+import com.example.telemetrydemo.domain.Payment;
+import com.example.telemetrydemo.domain.Receipt;
+import com.obsinity.telemetry.annotations.Attribute;
+import com.obsinity.telemetry.annotations.Flow;
+import com.obsinity.telemetry.annotations.Kind;
+import com.obsinity.telemetry.annotations.PromotionAlert;
+import com.obsinity.telemetry.annotations.Step;
+import io.opentelemetry.api.trace.SpanKind;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.util.UUID;
+import java.util.logging.StandardLevel;
+
 @Service
-@Kind(spanKind = SpanKind.SERVER)
+@Kind(spanKind = SpanKind.SERVER) // default SpanKind for methods here
 public class OrderService {
 
-    @Flow(name = "order.create")
-    public void createOrder(
-        @Attribute("order.id") String orderId,
-        @Attribute("order.total") BigDecimal total
-    ) {
-        validate(orderId, total); // child event
+    @Flow(name = "checkout.process")
+    public Receipt checkout(@Attribute("order.id") String orderId) {
+        validate(orderId, new BigDecimal("99.99"));  // child event
+        charge(orderId, new Payment("card", new BigDecimal("99.99"), "EUR")); // child event (CLIENT)
+        persist(orderId); // child event
+        return new Receipt(UUID.randomUUID().toString());
     }
 
-    @Step(name = "order.validate")
-    @PromotionAlert(level = StandardLevel.WARNING)
-    public void validate(
-        @Attribute("order.id") String orderId,
-        @Attribute("order.total") BigDecimal total
-    ) {
-        // WARN log if called without Flow
+    @Step(name = "checkout.validate")
+    @PromotionAlert(level = StandardLevel.WARNING) // if called outside Flow, warn when promoted
+    public void validate(@Attribute("order.id") String orderId,
+                         @Attribute("order.total") BigDecimal total) {
+        // … validation logic …
+    }
+
+    @Step(name = "checkout.charge")
+    @Kind(spanKind = SpanKind.CLIENT)
+    public void charge(@Attribute("order.id") String orderId,
+                       @Attribute("payment") Payment payment) {
+        // … call payment provider …
+    }
+
+    @Step(name = "checkout.persist")
+    public void persist(@Attribute("order.id") String orderId) {
+        // … save to DB …
+    }
+}
+```
+
+### `OrderController.java`
+
+```java
+package com.example.telemetrydemo.web;
+
+import com.example.telemetrydemo.domain.Receipt;
+import com.example.telemetrydemo.service.OrderService;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/orders")
+public class OrderController {
+    private final OrderService service;
+    public OrderController(OrderService service) { this.service = service; }
+
+    @PostMapping("/{orderId}/checkout")
+    public Receipt checkout(@PathVariable String orderId) {
+        return service.checkout(orderId);
+    }
+
+    // Intentionally calls a @Step directly (no @Flow) to demo promotion + PromotionAlert
+    @PostMapping("/{orderId}/validate")
+    public void validate(@PathVariable String orderId) {
+        service.validate(orderId, null);
     }
 }
 ```
 
 ---
 
+## Simple Receiver (logs a single message)
+
+A minimal `TelemetryReceiver` that **just logs one concise line per event**:
+
+```java
+package com.example.telemetrydemo.telemetry;
+
+import com.obsinity.telemetry.model.TelemetryHolder;
+import com.obsinity.telemetry.receivers.TelemetryReceiver;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class SimpleLoggingReceiver implements TelemetryReceiver {
+    private static final Logger log = LoggerFactory.getLogger(SimpleLoggingReceiver.class);
+
+    @Override
+    public void receive(TelemetryHolder t) {
+        // Adjust field access according to your SDK’s TelemetryHolder API
+        String name = safe(() -> t.getName());
+        String spanKind = safe(() -> String.valueOf(t.getSpanKind()));
+        Long durationMs = safe(() -> t.getDurationMs());
+        boolean error = safe(() -> t.isError());
+        log.info("[telemetry] name={}, spanKind={}, durationMs={}, error={}",
+                 name, spanKind, durationMs, error);
+    }
+
+    private static <T> T safe(java.util.function.Supplier<T> s) {
+        try { return s.get(); } catch (Throwable e) { return null; }
+    }
+}
+```
+
+> If you later want richer logs (trace/span IDs, attributes, counters), extend this receiver or add another one. Multiple receivers can coexist.
+
+---
+
 ## Best Practices
 
 * **Naming**: Always use OTEL-style lowercase, dot-separated names for `@Flow` and `@Step`.
-* **Attributes**: Keep keys stable over time; avoid high-cardinality values unless essential.
+* **Attributes**: Keep keys stable; avoid excessive cardinality.
 * **PromotionAlert**:
 
     * INFO for benign entry-points.
     * WARNING for unexpected but non-critical promotions.
     * ERROR (default) for serious misuses.
-* **Complex Objects**: Ensure they’re serializable via the configured `ObjectMapper`.
+* **Complex Objects**: Ensure objects annotated with `@Attribute` are serializable by your configured `ObjectMapper`.
