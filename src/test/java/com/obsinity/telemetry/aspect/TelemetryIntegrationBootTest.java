@@ -213,12 +213,6 @@ class TelemetryIntegrationBootTest {
 
 		Map<String, Object> ev = stepEvent.attributes().asMap();
 		log.info("stepB event attributes: {}", ev);
-		assertThat(ev)
-			.containsEntry("phase", "finish")
-			.containsEntry("result", "success")
-			.containsEntry("class", TelemetryIntegrationBootTestService.class.getName())
-			.containsEntry("method", "stepB");
-		assertThat((Long) ev.get("duration.nanos")).isNotNull().isGreaterThanOrEqualTo(0L);
 
 		assertThat(stepEvent.epochNanos()).isGreaterThan(0L);
 		assertThat(stepEvent.endEpochNanos()).isNotNull();

@@ -11,6 +11,7 @@
         <relativePath/>
     </parent>
 
+    <groupId>com.obsinity.telemetry</groupId>
     <artifactId>obsinity-java-sdk</artifactId>
     <name>obsinity-java-sdk</name>
     <packaging>jar</packaging>
