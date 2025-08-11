@@ -47,7 +47,7 @@ public class TelemetryProcessor {
 			telemetryProcessorSupport.safe(new TelemetryProcessorSupport.UnsafeRunnable() {
 				@Override
 				public void run() {
-					onInvocationStarted(telemetryProcessorSupport.currentHolder(), joinPoint, options);
+					onInvocationStarted(telemetryProcessorSupport.currentHolder(), options);
 				}
 			});
 
@@ -60,7 +60,7 @@ public class TelemetryProcessor {
 			telemetryProcessorSupport.safe(new TelemetryProcessorSupport.UnsafeRunnable() {
 				@Override
 				public void run() {
-					onSuccess(telemetryProcessorSupport.currentHolder(), result, joinPoint, options);
+					onSuccess(telemetryProcessorSupport.currentHolder(), result, options);
 				}
 			});
 			return result;
@@ -71,7 +71,7 @@ public class TelemetryProcessor {
 			telemetryProcessorSupport.safe(new TelemetryProcessorSupport.UnsafeRunnable() {
 				@Override
 				public void run() {
-					onError(telemetryProcessorSupport.currentHolder(), t, joinPoint, options);
+					onError(telemetryProcessorSupport.currentHolder(), t, options);
 				}
 			});
 			throw t;
@@ -79,7 +79,7 @@ public class TelemetryProcessor {
 			telemetryProcessorSupport.safe(new TelemetryProcessorSupport.UnsafeRunnable() {
 				@Override
 				public void run() {
-					onInvocationFinishing(telemetryProcessorSupport.currentHolder(), joinPoint, options);
+					onInvocationFinishing(telemetryProcessorSupport.currentHolder(), options);
 				}
 			});
 			finishFlowIfOpened(opened, opensRoot, joinPoint, options);
@@ -128,7 +128,7 @@ public class TelemetryProcessor {
 
 		telemetryProcessorSupport.push(opened);
 		try {
-			onFlowStarted(opened, parent, joinPoint, options);
+			onFlowStarted(opened, parent, options);
 		} catch (Exception ignored) {
 			// Intentionally ignore receiver/side-effect errors on start
 		}
@@ -144,11 +144,11 @@ public class TelemetryProcessor {
 			return;
 		}
 		try {
-			onFlowFinishing(opened, joinPoint, options); // mutates holder + notifies
+			onFlowFinishing(opened, options); // mutates holder + notifies
 			if (opensRoot) {
 				final List<TelemetryHolder> batch = telemetryProcessorSupport.finishBatchAndGet();
 				if (batch != null && !batch.isEmpty()) {
-					onRootFlowFinished(batch, joinPoint, options);
+					onRootFlowFinished(batch, options);
 				}
 			}
 		} catch (Exception ignored) {
@@ -201,22 +201,18 @@ public class TelemetryProcessor {
 	}
 
 	protected TelemetryHolder.OAttributes buildAttributes(final ProceedingJoinPoint pjp, final FlowOptions opts) {
-		// Intentionally empty: subclasses can populate baseline flow attributes
 		return new TelemetryHolder.OAttributes(new LinkedHashMap<>());
 	}
 
 	protected List<TelemetryHolder.OEvent> buildEvents() {
-		// Intentionally empty: events list starts empty and is appended as steps complete
 		return new java.util.ArrayList<>();
 	}
 
 	protected List<TelemetryHolder.OLink> buildLinks() {
-		// Intentionally empty: links are optional and can be added by subclasses
 		return new java.util.ArrayList<>();
 	}
 
 	protected TelemetryHolder.OStatus buildStatus() {
-		// Intentionally empty: status is optional; override to set initial status
 		return null;
 	}
 
@@ -225,39 +221,39 @@ public class TelemetryProcessor {
 	}
 
 	protected void onFlowStarted(final TelemetryHolder opened, final TelemetryHolder parent,
-								 , final FlowOptions options) {
+								 final FlowOptions options) {
 		telemetryProcessorSupport.addToBatch(opened);                 // record in execution (start) order
 		telemetryProcessorSupport.notifyFlowStarted(receivers, opened);
 	}
 
 	protected void onFlowFinishing(final TelemetryHolder opened,
-								   , final FlowOptions options) {
+								   final FlowOptions options) {
 		telemetryProcessorSupport.setEndTime(opened, Instant.now());  // mutate the same instance already in the batch
 		telemetryProcessorSupport.notifyFlowFinished(receivers, opened);
 	}
 
 	protected void onRootFlowFinished(final List<TelemetryHolder> batch,
-									  , final FlowOptions options) {
+									  final FlowOptions options) {
 		telemetryProcessorSupport.notifyRootFlowFinished(receivers, batch);
 	}
 
 	protected void onInvocationStarted(final TelemetryHolder current,
-									   , final FlowOptions options) {
+									   final FlowOptions options) {
 		// Intentionally empty: override for custom pre-invocation behavior
 	}
 
 	protected void onInvocationFinishing(final TelemetryHolder current,
-										 , final FlowOptions options) {
+										 final FlowOptions options) {
 		// Intentionally empty: override for custom post-invocation behavior
 	}
 
 	protected void onSuccess(final TelemetryHolder current, final Object result,
-							 , final FlowOptions options) {
+							 final FlowOptions options) {
 		// Intentionally empty: override to observe successful returns
 	}
 
 	protected void onError(final TelemetryHolder current, final Throwable error,
-						   , final FlowOptions options) {
+						   final FlowOptions options) {
 		// Intentionally empty: override to observe errors
 	}
 
