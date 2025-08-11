@@ -1,8 +1,8 @@
-package com.obsinity.telemetry.aspects;
+package com.obsinity.telemetry.aspect;
 
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Step;
-import com.obsinity.telemetry.processors.TelemetryProcessor;
+import com.obsinity.telemetry.processor.TelemetryProcessor;
 import lombok.RequiredArgsConstructor;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;

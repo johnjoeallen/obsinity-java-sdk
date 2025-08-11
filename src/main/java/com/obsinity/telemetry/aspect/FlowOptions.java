@@ -1,4 +1,4 @@
-package com.obsinity.telemetry.aspects;
+package com.obsinity.telemetry.aspect;
 
 import io.opentelemetry.api.trace.SpanKind;
 import org.apache.logging.log4j.spi.StandardLevel;

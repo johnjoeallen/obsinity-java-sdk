@@ -1,11 +1,15 @@
-package com.obsinity.telemetry.aspects;
+package com.obsinity.telemetry.aspect;
 
 import com.obsinity.telemetry.annotations.AutoFlow;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
 import com.obsinity.telemetry.annotations.Step;
+import com.obsinity.telemetry.annotations.Attribute;
 import com.obsinity.telemetry.model.TelemetryHolder;
-import com.obsinity.telemetry.processors.TelemetryProcessor;
+import com.obsinity.telemetry.processor.AttributeParamExtractor;
+import com.obsinity.telemetry.processor.TelemetryAttributeBinder;
+import com.obsinity.telemetry.processor.TelemetryProcessor;
+import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import com.obsinity.telemetry.receivers.TelemetryReceiver;
 import io.opentelemetry.api.trace.SpanKind;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,16 +60,38 @@ class TelemetryIntegrationBootTest {
 		}
 
 		@Bean
-		TelemetryProcessor telemetryProcessor(List<TelemetryReceiver> receivers) {
-			return new TelemetryProcessor(receivers) {
+		AttributeParamExtractor attributeParamExtractor() {
+			return new AttributeParamExtractor();
+		}
+
+		@Bean
+		TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor extractor) {
+			return new TelemetryAttributeBinder(extractor);
+		}
+
+		@Bean
+		TelemetryProcessorSupport telemetryProcessorSupport() {
+			return new TelemetryProcessorSupport();
+		}
+
+		@Bean
+		TelemetryProcessor telemetryProcessor(TelemetryAttributeBinder binder,
+											  TelemetryProcessorSupport support,
+											  List<TelemetryReceiver> receivers) {
+			return new TelemetryProcessor(binder, support, receivers) {
 				@Override
 				protected TelemetryHolder.OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
+					// Base attributes for the flow
 					Map<String, Object> m = new LinkedHashMap<>();
 					m.put("test.flow", opts.name());
 					m.put("declaring.class", pjp.getSignature().getDeclaringTypeName());
 					m.put("declaring.method", pjp.getSignature().getName());
 					m.put("custom.tag", "integration");
-					return new TelemetryHolder.OAttributes(m);
+
+					// Create OAttributes, then merge @Attribute-annotated parameters from the join point
+					TelemetryHolder.OAttributes attrs = new TelemetryHolder.OAttributes(m);
+					binder.bind(attrs, pjp);
+					return attrs;
 				}
 			};
 		}
@@ -129,6 +155,13 @@ class TelemetryIntegrationBootTest {
 
 		@Flow(name = "nestedFlow")
 		public void nestedFlow() { /* no-op */ }
+
+		// Example method showing how @Attribute on params would flow into OAttributes via binder
+		@Flow(name = "paramFlowExample")
+		public void paramFlowExample(
+			@Attribute(name = "user.id") String userId,
+			@Attribute(name = "flags") Map<String, Object> flags
+		) { /* no-op */ }
 	}
 
 	@Autowired
@@ -255,6 +288,29 @@ class TelemetryIntegrationBootTest {
 
 		assertThat(firstAttrs).containsEntry("test.flow", "rootFlow");
 		assertThat(secondAttrs).containsEntry("test.flow", "nestedFlow");
+	}
+
+	@Test
+	@DisplayName("@Attribute parameters are bound into flow attributes")
+	void paramFlowExampleBindsAttributes() {
+		Map<String, Object> flags = new LinkedHashMap<>();
+		flags.put("flag.one", true);
+		flags.put("flag.two", "yes");
+
+		service.paramFlowExample("user-123", flags);
+
+		assertThat(receiver.starts).hasSize(1);
+		TelemetryHolder start = receiver.starts.get(0);
+
+		Map<String, Object> attrs = start.attributes().asMap();
+		log.info("paramFlowExample attributes: {}", attrs);
+
+		assertThat(attrs)
+			.containsEntry("user.id", "user-123")
+			.containsEntry("flags", flags)
+			// Still has the test attributes from buildAttributes()
+			.containsEntry("test.flow", "paramFlowExample")
+			.containsEntry("declaring.method", "paramFlowExample");
 	}
 
 	/* helpers */

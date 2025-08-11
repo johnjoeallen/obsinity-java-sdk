@@ -1,9 +1,9 @@
-package com.obsinity.telemetry.aspects;
+package com.obsinity.telemetry.aspect;
 
 import com.obsinity.telemetry.annotations.AutoFlow;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Step;
-import com.obsinity.telemetry.processors.TelemetryProcessor;
+import com.obsinity.telemetry.processor.TelemetryProcessor;
 import org.apache.logging.log4j.spi.StandardLevel;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.junit.jupiter.api.BeforeEach;

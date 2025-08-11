@@ -1,4 +1,4 @@
-package com.obsinity.telemetry.aspects;
+package com.obsinity.telemetry.aspect;
 
 /**
  * Which annotation triggered the advice.

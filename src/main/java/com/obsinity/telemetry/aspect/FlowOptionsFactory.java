@@ -1,4 +1,4 @@
-package com.obsinity.telemetry.aspects;
+package com.obsinity.telemetry.aspect;
 
 import com.obsinity.telemetry.annotations.AutoFlow;
 import com.obsinity.telemetry.annotations.Flow;
