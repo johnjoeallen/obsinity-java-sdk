@@ -7,17 +7,16 @@ import com.obsinity.telemetry.processors.TelemetryProcessor;
 import org.apache.logging.log4j.spi.StandardLevel;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.context.annotation.Import;
-import org.springframework.stereotype.Component;
-import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
@@ -29,24 +28,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 
-/**
- * Parameterized verification for Obsinity’s Java SDK aspect-driven telemetry.
- *
- * <p>This test exercises the SDK’s annotation model—{@link Flow}, {@link Step}, and {@link AutoFlow}—
- * which lets applications declare telemetry at method boundaries without creating a Java class per
- * event type. The {@link TelemetryAspect} recognizes these annotations at runtime and forwards a
- * derived {@link FlowOptions} to the pluggable {@link TelemetryProcessor}.</p>
- *
- * <p>Scenarios covered:
- * <ul>
- *   <li><b>Flow</b> — {@link Flow}-annotated entry point.</li>
- *   <li><b>Step</b> — {@link Step} within an active flow.</li>
- *   <li><b>Step + AutoFlow (default ERROR)</b> — {@link Step} that may start its own flow when none is active.</li>
- *   <li><b>Step + AutoFlow(WARN)</b> — same as above with {@link AutoFlow#level()} set to WARN.</li>
- * </ul>
- */
-@SpringBootTest
-@ContextConfiguration(classes = TelemetryAspectParameterizedTest.TestConfig.class)
+@SpringBootTest(
+	classes = TelemetryAspectParameterizedTest.TestConfig.class,
+	properties = "spring.main.web-application-type=none"
+)
+@DisplayName("TelemetryAspect: parameterized advice verification")
 class TelemetryAspectParameterizedTest {
 
 	@MockitoSpyBean
@@ -56,7 +42,7 @@ class TelemetryAspectParameterizedTest {
 	TelemetryProcessor telemetryProcessor;
 
 	@Autowired
-	private TestService testService;
+	private TelemetryAspectTestService testService;
 
 	@BeforeEach
 	void resetMocks() {
@@ -72,16 +58,18 @@ class TelemetryAspectParameterizedTest {
 		);
 	}
 
-	@ParameterizedTest(name = "{index} -> {0}")
+	@ParameterizedTest(name = "{index} → {0}")
 	@MethodSource("cases")
-	void advice_runs_and_forwards_FlowOptions(TestCase tc) throws Throwable {
-		// GIVEN: expected FlowOptions for this method
-		FlowOptions expected = FlowOptionsFactory.fromClassAndMethod(TestService.class, tc.methodName);
+	@DisplayName("Advice runs and forwards FlowOptions to TelemetryProcessor")
+	void adviceRunsAndForwardsFlowOptions(TestCase tc) throws Throwable {
+		// GIVEN
+		FlowOptions expected =
+			FlowOptionsFactory.fromClassAndMethod(TelemetryAspectTestService.class, tc.methodName);
 
 		Mockito.when(telemetryProcessor.proceed(any(ProceedingJoinPoint.class), eq(expected)))
 			.thenReturn("ok");
 
-		// WHEN: invoke the method by name on the proxied bean (ensures aspect advice applies)
+		// WHEN
 		Method m = testService.getClass().getMethod(tc.methodName);
 		String out = (String) m.invoke(testService);
 
@@ -102,44 +90,34 @@ class TelemetryAspectParameterizedTest {
 	}
 
 	private record TestCase(String methodName, boolean isFlow) {
-		@Override
-		public String toString() {
-			return methodName;
-		}
+		@Override public String toString() { return methodName; }
 	}
 
-	@Configuration
-	@EnableAspectJAutoProxy(proxyTargetClass = true)
-	@Import({TelemetryAspect.class})
+	@TestConfiguration
+	@EnableAspectJAutoProxy(exposeProxy = true, proxyTargetClass = true)
+	@Import(TelemetryAspect.class)
 	static class TestConfig {
 		@Bean
-		TestService testService() {
-			return new TestService();
+		TelemetryAspectTestService telemetryAspectTestService() {
+			return new TelemetryAspectTestService();
 		}
 	}
 
-	@Component
-	static class TestService {
-		@Flow(name = "doFlow")
-		public String doFlow() {
-			return "ok";
-		}
+	/** Methods under test; exposed only as a @Bean, not via component scan. */
+	static class TelemetryAspectTestService {
 
-		@Step(name = "doStep")
-		public String doStep() {
-			return "ok";
-		}
+		@Flow(name = "doFlow" /*, description = "Root flow method"*/)
+		public String doFlow() { return "ok"; }
 
-		@Step(name = "doStep")
+		@Step(name = "doStep" /*, description = "Simple step inside active flow"*/)
+		public String doStep() { return "ok"; }
+
+		@Step(name = "doStep" /*, description = "Step that can auto-start a flow if none active"*/)
 		@AutoFlow
-		public String doStepAutoFlow() {
-			return "ok";
-		}
+		public String doStepAutoFlow() { return "ok"; }
 
-		@Step(name = "doStep")
+		@Step(name = "doStep" /*, description = "AutoFlow with WARN level"*/)
 		@AutoFlow(level = StandardLevel.WARN)
-		public String doStepAutoFlowWWarn() {
-			return "ok";
-		}
+		public String doStepAutoFlowWWarn() { return "ok"; }
 	}
 }

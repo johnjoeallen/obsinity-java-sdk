@@ -19,7 +19,6 @@ import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
 import java.time.Instant;
@@ -45,7 +44,6 @@ class TelemetryIntegrationBootTest {
 	@SpringBootConfiguration
 	@EnableAutoConfiguration
 	@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
-	@ComponentScan(basePackages = "com.obsinity.telemetry.receivers")
 	static class TestApp {
 		@Bean
 		com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
@@ -78,8 +76,8 @@ class TelemetryIntegrationBootTest {
 		}
 
 		@Bean
-		TestService testService() {
-			return new TestService();
+		TelemetryIntegrationBootTestService telemetryIntegrationBootTestService() {
+			return new TelemetryIntegrationBootTestService();
 		}
 	}
 
@@ -105,10 +103,10 @@ class TelemetryIntegrationBootTest {
 	}
 
 	@Kind(SpanKind.SERVER)
-	static class TestService {
+	static class TelemetryIntegrationBootTestService {
 		@Flow(name = "flowA")
 		public String flowA() {
-			((TestService) AopContext.currentProxy()).stepB();
+			((TelemetryIntegrationBootTestService) AopContext.currentProxy()).stepB();
 			return "ok";
 		}
 
@@ -126,7 +124,7 @@ class TelemetryIntegrationBootTest {
 
 		@Flow(name = "rootFlow")
 		public void rootFlow() {
-			((TestService) AopContext.currentProxy()).nestedFlow();
+			((TelemetryIntegrationBootTestService) AopContext.currentProxy()).nestedFlow();
 		}
 
 		@Flow(name = "nestedFlow")
@@ -134,7 +132,7 @@ class TelemetryIntegrationBootTest {
 	}
 
 	@Autowired
-	TestService service;
+	TelemetryIntegrationBootTestService service;
 	@Autowired
 	RecordingReceiver receiver;
 
@@ -168,9 +166,10 @@ class TelemetryIntegrationBootTest {
 
 		Map<String, Object> flowAttrs = finish.attributes().asMap();
 		log.info("flowA attributes: {}", flowAttrs);
-		assertThat(flowAttrs.get("test.flow")).isEqualTo("flowA");
-		assertThat(flowAttrs.get("declaring.method")).isEqualTo("flowA");
-		assertThat(flowAttrs.get("custom.tag")).isEqualTo("integration");
+		assertThat(flowAttrs)
+			.containsEntry("test.flow", "flowA")
+			.containsEntry("declaring.method", "flowA")
+			.containsEntry("custom.tag", "integration");
 
 		assertThat(finish.events()).isNotNull().isNotEmpty();
 
@@ -181,12 +180,12 @@ class TelemetryIntegrationBootTest {
 
 		Map<String, Object> ev = stepEvent.attributes().asMap();
 		log.info("stepB event attributes: {}", ev);
-		assertThat(ev.get("phase")).isEqualTo("finish");
-		assertThat(ev.get("result")).isEqualTo("success");
-		assertThat(ev.get("class")).isEqualTo(TestService.class.getName());
-		assertThat(ev.get("method")).isEqualTo("stepB");
-		assertThat((Long) ev.get("duration.nanos")).isNotNull();
-		assertThat((Long) ev.get("duration.nanos")).isGreaterThanOrEqualTo(0L);
+		assertThat(ev)
+			.containsEntry("phase", "finish")
+			.containsEntry("result", "success")
+			.containsEntry("class", TelemetryIntegrationBootTestService.class.getName())
+			.containsEntry("method", "stepB");
+		assertThat((Long) ev.get("duration.nanos")).isNotNull().isGreaterThanOrEqualTo(0L);
 
 		assertThat(stepEvent.epochNanos()).isGreaterThan(0L);
 		assertThat(stepEvent.endEpochNanos()).isNotNull();
@@ -208,9 +207,10 @@ class TelemetryIntegrationBootTest {
 
 		Map<String, Object> attrs = start.attributes().asMap();
 		log.info("lonelyStep attributes: {}", attrs);
-		assertThat(attrs.get("test.flow")).isEqualTo("lonelyStep");
-		assertThat(attrs.get("declaring.method")).isEqualTo("lonelyStep");
-		assertThat(attrs.get("custom.tag")).isEqualTo("integration");
+		assertThat(attrs)
+			.containsEntry("test.flow", "lonelyStep")
+			.containsEntry("declaring.method", "lonelyStep")
+			.containsEntry("custom.tag", "integration");
 	}
 
 	@Test
@@ -223,8 +223,9 @@ class TelemetryIntegrationBootTest {
 
 		Map<String, Object> attrs = h.attributes().asMap();
 		log.info("flowClient attributes: {}", attrs);
-		assertThat(attrs.get("test.flow")).isEqualTo("flowClient");
-		assertThat(attrs.get("declaring.method")).isEqualTo("flowClient");
+		assertThat(attrs)
+			.containsEntry("test.flow", "flowClient")
+			.containsEntry("declaring.method", "flowClient");
 	}
 
 	@Test
@@ -252,8 +253,8 @@ class TelemetryIntegrationBootTest {
 		log.info("rootFlow attrs: {}", firstAttrs);
 		log.info("nestedFlow attrs: {}", secondAttrs);
 
-		assertThat(firstAttrs.get("test.flow")).isEqualTo("rootFlow");
-		assertThat(secondAttrs.get("test.flow")).isEqualTo("nestedFlow");
+		assertThat(firstAttrs).containsEntry("test.flow", "rootFlow");
+		assertThat(secondAttrs).containsEntry("test.flow", "nestedFlow");
 	}
 
 	/* helpers */
