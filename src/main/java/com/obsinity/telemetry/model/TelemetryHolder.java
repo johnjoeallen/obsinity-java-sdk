@@ -7,16 +7,20 @@ import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.common.AttributesBuilder;
 import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
-import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.data.EventData;
 import io.opentelemetry.sdk.trace.data.LinkData;
 import io.opentelemetry.sdk.trace.data.StatusData;
 
 import java.time.Instant;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -37,32 +41,153 @@ import java.util.stream.Collectors;
  * Enums like {@link SpanKind} and {@link StatusCode} are used directly from OTEL.</p>
  */
 @JsonInclude(Include.NON_NULL)
-public record TelemetryHolder(
+public class TelemetryHolder {
 
-	/* ── OTEL-ish core ───────────────────────────────────────────── */
-	String   name,
-	Instant  timestamp,
-	Long     timeUnixNano,
-	Instant  endTimestamp,
-	String   traceId,
-	String   spanId,
-	String   parentSpanId,
-	SpanKind kind,                 // from OTEL enum
-	OResource   resource,          // wrapper
-	OAttributes attributes,        // wrapper
-	List<OEvent> events,           // wrapper
-	List<OLink>  links,            // wrapper
-	OStatus      status,           // wrapper
-
-	/* ── Obsinity-native ─────────────────────────────────────────── */
-	String                serviceId,      // required here OR in resource["service.id"]
-	String                correlationId,
-	Map<String, Object>   extensions,     // free-form native extensions
-	Boolean               synthetic
-) {
 	public static final String SERVICE_ID_ATTR = "service.id";
 
-	/** Resolve service id with top-level preference, fallback to resource["service.id"]. */
+	/* ── OTEL-ish core ───────────────────────────────────────────── */
+	private String name;
+	private Instant timestamp;
+	private Long timeUnixNano;
+	private Instant endTimestamp;
+	private String traceId;
+	private String spanId;
+	private String parentSpanId;
+	private SpanKind kind;                 // OTEL enum
+	private OResource resource;          // wrapper
+	private OAttributes attributes;        // wrapper
+	private List<OEvent> events;           // mutable
+	private List<OLink> links;            // mutable
+	private OStatus status;           // wrapper
+
+	/* ── Obsinity-native ─────────────────────────────────────────── */
+	private String serviceId;     // required here OR in resource["service.id"]
+	private String correlationId;
+	private Map<String, Object> extensions;    // mutable free-form
+	private Boolean synthetic;
+
+	/**
+	 * Full constructor (validates service id consistency).
+	 */
+	public TelemetryHolder(
+		String name,
+		Instant timestamp,
+		Long timeUnixNano,
+		Instant endTimestamp,
+		String traceId,
+		String spanId,
+		String parentSpanId,
+		SpanKind kind,
+		OResource resource,
+		OAttributes attributes,
+		List<OEvent> events,
+		List<OLink> links,
+		OStatus status,
+		String serviceId,
+		String correlationId,
+		Map<String, Object> extensions,
+		Boolean synthetic
+	) {
+		this.name = name;
+		this.timestamp = timestamp;
+		this.timeUnixNano = timeUnixNano;
+		this.endTimestamp = endTimestamp;
+		this.traceId = traceId;
+		this.spanId = spanId;
+		this.parentSpanId = parentSpanId;
+		this.kind = kind;
+		this.resource = resource;
+		this.attributes = attributes != null ? attributes : new OAttributes(new LinkedHashMap<>());
+		this.events = events != null ? events : new ArrayList<>();
+		this.links = links != null ? links : new ArrayList<>();
+		this.status = status;
+		this.serviceId = serviceId;
+		this.correlationId = correlationId;
+		this.extensions = (extensions != null ? extensions : new LinkedHashMap<>());
+		this.synthetic = synthetic;
+
+		validateServiceIdConsistency();
+	}
+
+	/* ========================= Accessors (record-like) ========================= */
+	public String name() {
+		return name;
+	}
+
+	public Instant timestamp() {
+		return timestamp;
+	}
+
+	public Long timeUnixNano() {
+		return timeUnixNano;
+	}
+
+	public Instant endTimestamp() {
+		return endTimestamp;
+	}
+
+	public String traceId() {
+		return traceId;
+	}
+
+	public String spanId() {
+		return spanId;
+	}
+
+	public String parentSpanId() {
+		return parentSpanId;
+	}
+
+	public SpanKind kind() {
+		return kind;
+	}
+
+	public OResource resource() {
+		return resource;
+	}
+
+	public OAttributes attributes() {
+		return attributes;
+	}
+
+	public List<OEvent> events() {
+		return events;
+	}           // MUTABLE
+
+	public List<OLink> links() {
+		return links;
+	}              // MUTABLE
+
+	public OStatus status() {
+		return status;
+	}
+
+	public String serviceId() {
+		return serviceId;
+	}
+
+	public String correlationId() {
+		return correlationId;
+	}
+
+	public Map<String, Object> extensions() {
+		return extensions;
+	} // MUTABLE
+
+	public Boolean synthetic() {
+		return synthetic;
+	}
+
+	/* Minimal mutators we actually use from the processor */
+	public void setEndTimestamp(Instant endTimestamp) {
+		this.endTimestamp = endTimestamp;
+	}
+
+	/* ========================= Behavior ========================= */
+
+	/**
+	 * Resolve service id with top-level preference, fallback to resource["service.id"].
+	 */
 	public String effectiveServiceId() {
 		if (serviceId != null && !serviceId.isBlank()) return serviceId;
 		if (resource == null || resource.attributes() == null) return null;
@@ -70,8 +195,10 @@ public record TelemetryHolder(
 		return v == null ? null : v.toString();
 	}
 
-	/* Validation: service id presence + equality if duplicated. */
-	public TelemetryHolder {
+	/**
+	 * Validate presence/equality of service id (top-level vs resource).
+	 */
+	private void validateServiceIdConsistency() {
 		String top = (serviceId == null || serviceId.isBlank()) ? null : serviceId;
 		String fromRes = null;
 		if (resource != null && resource.attributes() != null) {
@@ -90,28 +217,49 @@ public record TelemetryHolder(
 
 	/* ========================= Wrappers ========================= */
 
-	/** Wrapper around OTEL {@link Resource}. */
+	/**
+	 * Wrapper around OTEL {@link Resource}.
+	 */
 	@JsonInclude(Include.NON_NULL)
 	public static final class OResource {
 		private final OAttributes attributes;
 
-		public OResource(OAttributes attributes) { this.attributes = attributes; }
-		public OAttributes attributes() { return attributes; }
+		public OResource(OAttributes attributes) {
+			this.attributes = attributes;
+		}
+
+		public OAttributes attributes() {
+			return attributes;
+		}
 
 		/* Converters */
-		public Resource toOtel() { return Resource.create(attributes != null ? attributes.toOtel() : Attributes.empty()); }
+		public Resource toOtel() {
+			return Resource.create(attributes != null ? attributes.toOtel() : Attributes.empty());
+		}
+
 		public static OResource fromOtel(Resource r) {
 			return new OResource(OAttributes.fromOtel(r == null ? Attributes.empty() : r.getAttributes()));
 		}
 	}
 
-	/** Wrapper around OTEL {@link Attributes} with a simple String→Object view for JSON. */
+	/**
+	 * Wrapper around OTEL {@link Attributes} with a mutable String→Object view for JSON.
+	 */
 	@JsonInclude(Include.NON_NULL)
 	public static final class OAttributes {
 		private final Map<String, Object> asMap;
 
-		public OAttributes(Map<String, Object> asMap) { this.asMap = (asMap == null ? Map.of() : Map.copyOf(asMap)); }
-		public Map<String, Object> asMap() { return asMap; }
+		public OAttributes(Map<String, Object> asMap) {
+			this.asMap = (asMap != null ? asMap : new LinkedHashMap<>());
+		}
+
+		public Map<String, Object> asMap() {
+			return asMap;
+		}
+
+		public void put(String key, Object value) {
+			if (key != null) asMap.put(key, value);
+		}
 
 		/* Converters */
 		public Attributes toOtel() {
@@ -119,10 +267,15 @@ public record TelemetryHolder(
 			if (asMap != null) asMap.forEach((k, v) -> putBestEffort(b, k, v));
 			return b.build();
 		}
+
 		public static OAttributes fromOtel(Attributes attrs) {
-			if (attrs == null) return new OAttributes(Map.of());
+			if (attrs == null) return new OAttributes(new LinkedHashMap<>());
 			Map<String, Object> m = attrs.asMap().entrySet().stream()
-				.collect(Collectors.toUnmodifiableMap(e -> e.getKey().getKey(), Map.Entry::getValue));
+				.collect(Collectors.toMap(
+					e -> e.getKey().getKey(),
+					Map.Entry::getValue,
+					(a, b) -> a,
+					LinkedHashMap::new));
 			return new OAttributes(m);
 		}
 
@@ -150,8 +303,8 @@ public record TelemetryHolder(
 	@JsonInclude(Include.NON_NULL)
 	public static final class OEvent {
 		private final String name;
-		private final long   epochNanos;           // start
-		private final Long   endEpochNanos;        // end (optional)
+		private final long epochNanos;           // start
+		private final Long endEpochNanos;        // end (optional)
 		private final OAttributes attributes;
 		private final Integer droppedAttributesCount; // optional, contributes to total count
 
@@ -159,30 +312,63 @@ public record TelemetryHolder(
 			this.name = Objects.requireNonNull(name, "name");
 			this.epochNanos = epochNanos;
 			this.endEpochNanos = endEpochNanos;
-			this.attributes = attributes == null ? new OAttributes(Map.of()) : attributes;
+			this.attributes = attributes == null ? new OAttributes(new LinkedHashMap<>()) : attributes;
 			this.droppedAttributesCount = droppedAttributesCount;
 		}
 
-		public String name() { return name; }
-		public long epochNanos() { return epochNanos; }
-		public Long endEpochNanos() { return endEpochNanos; }
-		public OAttributes attributes() { return attributes; }
-		public Integer droppedAttributesCount() { return droppedAttributesCount; }
+		public String name() {
+			return name;
+		}
 
-		/** OTEL view (no end time in the interface; exporter can still use {@link #endEpochNanos()}). */
+		public long epochNanos() {
+			return epochNanos;
+		}
+
+		public Long endEpochNanos() {
+			return endEpochNanos;
+		}
+
+		public OAttributes attributes() {
+			return attributes;
+		}
+
+		public Integer droppedAttributesCount() {
+			return droppedAttributesCount;
+		}
+
+		/**
+		 * OTEL view (no end time in the interface; exporter can still use {@link #endEpochNanos()}).
+		 */
 		public EventData toOtel() {
 			final Attributes otelAttrs = attributes.toOtel();
 			final int total = (droppedAttributesCount == null ? otelAttrs.size() : otelAttrs.size() + droppedAttributesCount);
 			return new EventData() {
-				@Override public long getEpochNanos() { return epochNanos; }
-				@Override public String getName() { return name; }
-				@Override public Attributes getAttributes() { return otelAttrs; }
-				@Override public int getTotalAttributeCount() { return total; }
+				@Override
+				public long getEpochNanos() {
+					return epochNanos;
+				}
+
+				@Override
+				public String getName() {
+					return name;
+				}
+
+				@Override
+				public Attributes getAttributes() {
+					return otelAttrs;
+				}
+
+				@Override
+				public int getTotalAttributeCount() {
+					return total;
+				}
 			};
 		}
 	}
 
-	/** Wrapper around OTEL {@link LinkData}. */
+	/**
+	 * Wrapper around OTEL {@link LinkData}.
+	 */
 	@JsonInclude(Include.NON_NULL)
 	public static final class OLink {
 		private final String traceId;
@@ -192,12 +378,20 @@ public record TelemetryHolder(
 		public OLink(String traceId, String spanId, OAttributes attributes) {
 			this.traceId = Objects.requireNonNull(traceId, "traceId");
 			this.spanId = Objects.requireNonNull(spanId, "spanId");
-			this.attributes = attributes == null ? new OAttributes(Map.of()) : attributes;
+			this.attributes = attributes == null ? new OAttributes(new LinkedHashMap<>()) : attributes;
 		}
 
-		public String traceId() { return traceId; }
-		public String spanId() { return spanId; }
-		public OAttributes attributes() { return attributes; }
+		public String traceId() {
+			return traceId;
+		}
+
+		public String spanId() {
+			return spanId;
+		}
+
+		public OAttributes attributes() {
+			return attributes;
+		}
 
 		public LinkData toOtel() {
 			SpanContext ctx = SpanContext.create(traceId, spanId, TraceFlags.getSampled(), TraceState.getDefault());
@@ -210,17 +404,31 @@ public record TelemetryHolder(
 		}
 	}
 
-	/** Wrapper around OTEL {@link StatusData}. Uses OTEL {@link StatusCode} enum directly. */
+	/**
+	 * Wrapper around OTEL {@link StatusData}. Uses OTEL {@link StatusCode} enum directly.
+	 */
 	@JsonInclude(Include.NON_NULL)
 	public static final class OStatus {
 		private final StatusCode code;
 		private final String message;
 
-		public OStatus(StatusCode code, String message) { this.code = code; this.message = message; }
-		public StatusCode code() { return code; }
-		public String message() { return message; }
+		public OStatus(StatusCode code, String message) {
+			this.code = code;
+			this.message = message;
+		}
 
-		public StatusData toOtel() { return StatusData.create(code, message); }
+		public StatusCode code() {
+			return code;
+		}
+
+		public String message() {
+			return message;
+		}
+
+		public StatusData toOtel() {
+			return StatusData.create(code, message);
+		}
+
 		public static OStatus fromOtel(StatusData sd) {
 			if (sd == null) return null;
 			return new OStatus(sd.getStatusCode(), sd.getDescription());

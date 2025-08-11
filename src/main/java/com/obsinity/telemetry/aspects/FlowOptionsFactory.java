@@ -18,9 +18,12 @@ import java.util.List;
 
 public final class FlowOptionsFactory {
 
-	private FlowOptionsFactory() {}
+	private FlowOptionsFactory() {
+	}
 
-	/** Build FlowOptions from a reflective method (expects most-specific method). */
+	/**
+	 * Build FlowOptions from a reflective method (expects most-specific method).
+	 */
 	public static FlowOptions fromMethod(Method method) {
 		Class<?> targetClass = method.getDeclaringClass();
 		SpanKind spanKind = resolveKind(method, targetClass);
@@ -41,14 +44,18 @@ public final class FlowOptionsFactory {
 		throw new IllegalArgumentException("Method lacks @Flow or @Step: " + method);
 	}
 
-	/** Build FlowOptions by specifying the class + method name (no params). */
+	/**
+	 * Build FlowOptions by specifying the class + method name (no params).
+	 */
 	public static FlowOptions fromClassAndMethod(Class<?> type, String methodName) {
 		Method m = pickAnnotatedOrSingleByName(type, methodName);
 		Method mostSpecific = AopUtils.getMostSpecificMethod(m, type);
 		return fromMethod(mostSpecific);
 	}
 
-	/** Build FlowOptions by specifying the class + method name + parameter types. */
+	/**
+	 * Build FlowOptions by specifying the class + method name + parameter types.
+	 */
 	public static FlowOptions fromClassAndMethod(Class<?> type, String methodName, Class<?>... paramTypes) {
 		Method m = ReflectionUtils.findMethod(type, methodName, paramTypes);
 		if (m == null) {
@@ -58,7 +65,9 @@ public final class FlowOptionsFactory {
 		return fromMethod(mostSpecific);
 	}
 
-	/** Build FlowOptions from a ProceedingJoinPoint (resolves most-specific method). */
+	/**
+	 * Build FlowOptions from a ProceedingJoinPoint (resolves most-specific method).
+	 */
 	public static FlowOptions fromJoinPoint(ProceedingJoinPoint pjp) {
 		MethodSignature sig = (MethodSignature) pjp.getSignature();
 		Method method = sig.getMethod();
@@ -88,7 +97,9 @@ public final class FlowOptionsFactory {
 			"Ambiguous overloads for " + type.getName() + "#" + name + " — specify parameter types");
 	}
 
-	/** Precedence: @Kind on method > @Kind on class > INTERNAL. */
+	/**
+	 * Precedence: @Kind on method > @Kind on class > INTERNAL.
+	 */
 	private static SpanKind resolveKind(Method method, Class<?> targetClass) {
 		Kind methodKind = AnnotatedElementUtils.findMergedAnnotation(method, Kind.class);
 		if (methodKind != null) return methodKind.value();

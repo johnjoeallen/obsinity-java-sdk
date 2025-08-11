@@ -9,17 +9,23 @@ import com.obsinity.telemetry.processors.TelemetryProcessor;
 import com.obsinity.telemetry.receivers.TelemetryReceiver;
 import io.opentelemetry.api.trace.SpanKind;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 
@@ -29,16 +35,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 	classes = TelemetryIntegrationBootTest.TestApp.class,
 	webEnvironment = SpringBootTest.WebEnvironment.NONE,
 	properties = {
-		"spring.main.web-application-type=none",
-		// Optional safety net if another name sneaks in:
-		// "spring.main.allow-bean-definition-overriding=true"
+		"spring.main.web-application-type=none"
 	}
 )
 class TelemetryIntegrationBootTest {
 
+	private static final Logger log = LoggerFactory.getLogger(TelemetryIntegrationBootTest.class);
+
 	@SpringBootConfiguration
 	@EnableAutoConfiguration
-	@EnableAspectJAutoProxy(proxyTargetClass = true)
+	@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
 	@ComponentScan(basePackages = "com.obsinity.telemetry.receivers")
 	static class TestApp {
 		@Bean
@@ -51,31 +57,36 @@ class TelemetryIntegrationBootTest {
 			return new RecordingReceiver();
 		}
 
-		// Wire the processor explicitly; it depends on List<TelemetryReceiver>
 		@Bean
 		TelemetryProcessor telemetryProcessor(List<TelemetryReceiver> receivers) {
-			return new TelemetryProcessor(receivers);
+			return new TelemetryProcessor(receivers) {
+				@Override
+				protected TelemetryHolder.OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
+					Map<String, Object> m = new LinkedHashMap<>();
+					m.put("test.flow", opts.name());
+					m.put("declaring.class", pjp.getSignature().getDeclaringTypeName());
+					m.put("declaring.method", pjp.getSignature().getName());
+					m.put("custom.tag", "integration");
+					return new TelemetryHolder.OAttributes(m);
+				}
+			};
 		}
 
-		// Import the aspect explicitly (no component scan)
 		@Bean
 		TelemetryAspect telemetryAspect(TelemetryProcessor p) {
 			return new TelemetryAspect(p);
 		}
 
-		// Plain POJO test service (NOT @Component); no name collision
 		@Bean
 		TestService testService() {
 			return new TestService();
 		}
 	}
 
-	/**
-	 * Receiver that records starts/finishes for assertions.
-	 */
 	static class RecordingReceiver implements TelemetryReceiver {
 		final List<TelemetryHolder> starts = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> finishes = new CopyOnWriteArrayList<>();
+		final List<List<TelemetryHolder>> rootBatches = new CopyOnWriteArrayList<>();
 
 		@Override
 		public void flowStarted(TelemetryHolder holder) {
@@ -86,14 +97,18 @@ class TelemetryIntegrationBootTest {
 		public void flowFinished(TelemetryHolder holder) {
 			finishes.add(holder);
 		}
+
+		@Override
+		public void rootFlowFinished(List<TelemetryHolder> batch) {
+			rootBatches.add(batch);
+		}
 	}
 
-	// Not a component; registered via @Bean above
-	@Kind(SpanKind.SERVER) // class-level default
+	@Kind(SpanKind.SERVER)
 	static class TestService {
 		@Flow(name = "flowA")
 		public String flowA() {
-			stepB();
+			((TestService) AopContext.currentProxy()).stepB();
 			return "ok";
 		}
 
@@ -108,6 +123,14 @@ class TelemetryIntegrationBootTest {
 		@Kind(SpanKind.CLIENT)
 		@Flow(name = "flowClient")
 		public void flowClient() { /* no-op */ }
+
+		@Flow(name = "rootFlow")
+		public void rootFlow() {
+			((TestService) AopContext.currentProxy()).nestedFlow();
+		}
+
+		@Flow(name = "nestedFlow")
+		public void nestedFlow() { /* no-op */ }
 	}
 
 	@Autowired
@@ -119,10 +142,12 @@ class TelemetryIntegrationBootTest {
 	void reset() {
 		receiver.starts.clear();
 		receiver.finishes.clear();
+		receiver.rootBatches.clear();
 	}
 
 	@Test
-	void flow_with_nested_step_emits_single_start_and_finish() {
+	@DisplayName("Flow with nested step emits single start/finish; event recorded with attributes")
+	void flowWithNestedStepEmitsSingleStartAndFinishAndRecordsEventAttrs() {
 		String out = service.flowA();
 		assertThat(out).isEqualTo("ok");
 
@@ -140,10 +165,36 @@ class TelemetryIntegrationBootTest {
 		assertThat(finish.spanId()).isEqualTo(start.spanId());
 		assertThat(finish.endTimestamp()).isNotNull();
 		assertThat(finish.timestamp()).isBeforeOrEqualTo(Instant.now());
+
+		Map<String, Object> flowAttrs = finish.attributes().asMap();
+		log.info("flowA attributes: {}", flowAttrs);
+		assertThat(flowAttrs.get("test.flow")).isEqualTo("flowA");
+		assertThat(flowAttrs.get("declaring.method")).isEqualTo("flowA");
+		assertThat(flowAttrs.get("custom.tag")).isEqualTo("integration");
+
+		assertThat(finish.events()).isNotNull().isNotEmpty();
+
+		TelemetryHolder.OEvent stepEvent = finish.events().stream()
+			.filter(e -> "stepB".equals(e.name()))
+			.findFirst()
+			.orElseThrow(() -> new AssertionError("Expected stepB event"));
+
+		Map<String, Object> ev = stepEvent.attributes().asMap();
+		log.info("stepB event attributes: {}", ev);
+		assertThat(ev.get("phase")).isEqualTo("finish");
+		assertThat(ev.get("result")).isEqualTo("success");
+		assertThat(ev.get("class")).isEqualTo(TestService.class.getName());
+		assertThat(ev.get("method")).isEqualTo("stepB");
+		assertThat((Long) ev.get("duration.nanos")).isNotNull();
+		assertThat((Long) ev.get("duration.nanos")).isGreaterThanOrEqualTo(0L);
+
+		assertThat(stepEvent.epochNanos()).isGreaterThan(0L);
+		assertThat(stepEvent.endEpochNanos()).isNotNull();
 	}
 
 	@Test
-	void lonely_step_with_autoflow_is_promoted_and_notifies_start_finish() {
+	@DisplayName("Lonely step with @AutoFlow is promoted to a root flow and has attributes")
+	void lonelyStepWithAutoFlowIsPromotedAndHasFlowAttrs() {
 		service.lonelyStep();
 
 		assertThat(receiver.starts).hasSize(1);
@@ -153,14 +204,56 @@ class TelemetryIntegrationBootTest {
 		assertThat(start.name()).isEqualTo("lonelyStep");
 		assertThat(start.kind()).isEqualTo(SpanKind.PRODUCER);
 		assertTraceAndSpanIds(start);
-		assertThat(start.parentSpanId()).isNull(); // promoted root
+		assertThat(start.parentSpanId()).isNull();
+
+		Map<String, Object> attrs = start.attributes().asMap();
+		log.info("lonelyStep attributes: {}", attrs);
+		assertThat(attrs.get("test.flow")).isEqualTo("lonelyStep");
+		assertThat(attrs.get("declaring.method")).isEqualTo("lonelyStep");
+		assertThat(attrs.get("custom.tag")).isEqualTo("integration");
 	}
 
 	@Test
-	void method_level_kind_overrides_class_kind() {
+	@DisplayName("Method-level @Kind overrides class-level kind; attributes present")
+	void methodLevelKindOverridesClassKindAndAttrsPresent() {
 		service.flowClient();
 		assertThat(receiver.starts).hasSize(1);
-		assertThat(receiver.starts.get(0).kind()).isEqualTo(SpanKind.CLIENT);
+		TelemetryHolder h = receiver.starts.get(0);
+		assertThat(h.kind()).isEqualTo(SpanKind.CLIENT);
+
+		Map<String, Object> attrs = h.attributes().asMap();
+		log.info("flowClient attributes: {}", attrs);
+		assertThat(attrs.get("test.flow")).isEqualTo("flowClient");
+		assertThat(attrs.get("declaring.method")).isEqualTo("flowClient");
+	}
+
+	@Test
+	@DisplayName("Root flow batch is in execution order with nested flow and attributes present")
+	void rootFlowBatchContainsAllFlowsInExecutionOrderAndAttrsPresent() {
+		service.rootFlow();
+
+		assertThat(receiver.rootBatches).hasSize(1);
+		List<TelemetryHolder> batch = receiver.rootBatches.get(0);
+		log.info("rootFlow batch (size={}): {}", batch.size(), batch.stream().map(TelemetryHolder::name).toList());
+
+		// Execution/start order (root, then nested)
+		assertThat(batch).hasSize(2);
+		TelemetryHolder first = batch.get(0);
+		TelemetryHolder second = batch.get(1);
+
+		assertThat(first.name()).isEqualTo("rootFlow");
+		assertThat(second.name()).isEqualTo("nestedFlow");
+
+		assertThat(first.parentSpanId()).isNull();
+		assertThat(second.parentSpanId()).isNotNull();
+
+		Map<String, Object> firstAttrs = first.attributes().asMap();
+		Map<String, Object> secondAttrs = second.attributes().asMap();
+		log.info("rootFlow attrs: {}", firstAttrs);
+		log.info("nestedFlow attrs: {}", secondAttrs);
+
+		assertThat(firstAttrs.get("test.flow")).isEqualTo("rootFlow");
+		assertThat(secondAttrs.get("test.flow")).isEqualTo("nestedFlow");
 	}
 
 	/* helpers */

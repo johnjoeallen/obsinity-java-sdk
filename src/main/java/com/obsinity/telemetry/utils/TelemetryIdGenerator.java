@@ -4,7 +4,9 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.UUID;
 
-/** Minimal UUIDv7 generator + OTEL-friendly hex helpers. */
+/**
+ * Minimal UUIDv7 generator + OTEL-friendly hex helpers.
+ */
 public final class TelemetryIdGenerator {
 	private static final SecureRandom RNG = new SecureRandom();
 
@@ -20,15 +22,20 @@ public final class TelemetryIdGenerator {
 		return new UUID(msb, lsb);
 	}
 
-	/** 128-bit hex (lowercase, 32 chars) — good for OTEL traceId. */
+	/**
+	 * 128-bit hex (lowercase, 32 chars) — good for OTEL traceId.
+	 */
 	public static String hex128(UUID u) {
 		return String.format("%016x%016x", u.getMostSignificantBits(), u.getLeastSignificantBits());
 	}
 
-	/** 64-bit hex from LSB (lowercase, 16 chars) — good for OTEL spanId. */
+	/**
+	 * 64-bit hex from LSB (lowercase, 16 chars) — good for OTEL spanId.
+	 */
 	public static String hex64lsb(UUID u) {
 		return String.format("%016x", u.getLeastSignificantBits());
 	}
 
-	private TelemetryIdGenerator() {}
+	private TelemetryIdGenerator() {
+	}
 }

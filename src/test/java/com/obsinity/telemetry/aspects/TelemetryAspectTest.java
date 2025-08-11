@@ -102,30 +102,44 @@ class TelemetryAspectParameterizedTest {
 	}
 
 	private record TestCase(String methodName, boolean isFlow) {
-		@Override public String toString() { return methodName; }
+		@Override
+		public String toString() {
+			return methodName;
+		}
 	}
 
 	@Configuration
 	@EnableAspectJAutoProxy(proxyTargetClass = true)
 	@Import({TelemetryAspect.class})
 	static class TestConfig {
-		@Bean TestService testService() { return new TestService(); }
+		@Bean
+		TestService testService() {
+			return new TestService();
+		}
 	}
 
 	@Component
 	static class TestService {
 		@Flow(name = "doFlow")
-		public String doFlow() { return "ok"; }
+		public String doFlow() {
+			return "ok";
+		}
 
 		@Step(name = "doStep")
-		public String doStep() { return "ok"; }
+		public String doStep() {
+			return "ok";
+		}
 
 		@Step(name = "doStep")
 		@AutoFlow
-		public String doStepAutoFlow() { return "ok"; }
+		public String doStepAutoFlow() {
+			return "ok";
+		}
 
 		@Step(name = "doStep")
 		@AutoFlow(level = StandardLevel.WARN)
-		public String doStepAutoFlowWWarn() { return "ok"; }
+		public String doStepAutoFlowWWarn() {
+			return "ok";
+		}
 	}
 }
