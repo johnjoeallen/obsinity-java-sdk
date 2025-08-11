@@ -2,7 +2,16 @@
 
 **Annotations:** `@Flow`, `@Step`, `@Kind`, `@PromotionAlert`, `@Attribute`
 
-This doc explains how to instrument code with Obsinity’s annotations, how **Step promotion** works, how to bind method parameters to attributes, and how to plug in receivers using the current lifecycle callbacks.
+This guide explains:
+
+* How to instrument code using Obsinity’s annotations.
+* How **Step promotion** works.
+* How to bind method parameters to telemetry attributes.
+* How to set attributes programmatically via `TelemetryContext`.
+* How to plug in custom receivers using lifecycle callbacks.
+* **Attribute lifecycle** from event creation to storage.
+
+It is designed for developers who want rich, **OpenTelemetry-aligned** instrumentation with minimal boilerplate.
 
 ---
 
@@ -10,11 +19,14 @@ This doc explains how to instrument code with Obsinity’s annotations, how **St
 
 ### Key Concepts
 
-* **Flow event** — Top-level telemetry event for a logical operation.
-* **Child event** — Event emitted by a `@Step` inside an active Flow.
-* **Promotion** — A `@Step` called with **no active Flow** is **promoted** to a Flow event.
-* **Promotion warning** — One log message emitted at promotion; level controlled by `@PromotionAlert`.
-* **Attributes** — Key/value pairs attached to the current telemetry event (used for search, filtering, analytics).
+| Term                  | Description                                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **Flow event**        | The top-level telemetry unit for a logical operation (e.g., `checkout.process`).                             |
+| **Child event**       | An event emitted by a `@Step` inside an active Flow.                                                         |
+| **Promotion**         | When a `@Step` is called with **no active Flow**, it is **promoted** to a Flow event.                        |
+| **Promotion warning** | One log message emitted at promotion; level controlled by `@PromotionAlert`.                                 |
+| **Attributes**        | Key/value pairs attached to the current telemetry event; used for search, filtering, and analytics.          |
+| **Telemetry Context** | Programmatic API for adding attributes to the active telemetry scope without knowing if it’s a Flow or Step. |
 
 ---
 
@@ -24,9 +36,15 @@ This doc explains how to instrument code with Obsinity’s annotations, how **St
 
 Starts a **Flow event** and activates context so nested `@Step` calls become **child events**.
 
-* **Naming (OTEL style):** lowercase, dot-separated, stable (e.g., `checkout.process`, `inventory.reserve`, `http.get.user`)
-* Inherits `@Kind` from class unless overridden.
-* Works with `@Attribute` params to add attributes on entry.
+**Naming (OTEL style):**
+
+* Lowercase, dot-separated, stable (e.g., `checkout.process`, `inventory.reserve`, `http.get.user`).
+* Should reflect the **logical operation**, not implementation details.
+* Can inherit `@Kind` from the class or override at the method level.
+
+**Attribute binding:**
+
+* `@Flow` works with `@Attribute` parameters to add key/value pairs immediately when the Flow starts.
 
 **Example**
 
@@ -47,11 +65,14 @@ public Receipt checkout(
 
 ### `@Step` *(method only)*
 
-* Inside an active Flow → emits a **child event**.
-* With **no active Flow** → **promoted** to a Flow event:
+Represents a **unit of work** within a Flow.
+
+* **Inside an active Flow** → emits a **child event**.
+* **With no active Flow** → promoted to a Flow event:
 
     * Name = step’s OTEL-style name.
-    * Emits a **promotion warning** (level from `@PromotionAlert`, or **ERROR** if absent).
+    * Logs a promotion warning (level from `@PromotionAlert`, or **ERROR** if absent).
+    * Runs exactly like a Flow event from that point onward.
 
 **Example**
 
@@ -66,9 +87,17 @@ public void validate(@Attribute("order.id") String orderId) {
 
 ### `@Kind` *(class or method)*
 
-Sets default telemetry kind / OTEL `SpanKind` (e.g., `SERVER`, `CLIENT`).
+Sets default telemetry kind / OTEL `SpanKind`:
 
-* Put on class for defaults; override per method as needed.
+* `SERVER` — Server-side processing.
+* `CLIENT` — Outgoing request to another service.
+* `PRODUCER` / `CONSUMER` — Messaging.
+* `INTERNAL` — Internal work with no remote call.
+
+**Usage:**
+
+* Apply to the **class** for defaults.
+* Override at the **method** level when needed.
 
 **Example**
 
@@ -84,11 +113,11 @@ public class PaymentClient {
 
 ### `@PromotionAlert` *(only on `@Step` methods)*
 
-Controls the **log level of the promotion warning** when a `@Step` is promoted.
+Controls the **log level** for the promotion warning when a `@Step` is promoted.
 
-* Applies **only** on promotion (no active Flow).
-* **Supported levels:** `StandardLevel.INFO`, `StandardLevel.WARNING`, `StandardLevel.SEVERE` (ERROR).
-* **Default:** If absent, behaves as `@PromotionAlert(level = StandardLevel.SEVERE)`.
+* **Only applies** if there’s no active Flow.
+* **Levels:** `StandardLevel.INFO`, `StandardLevel.WARNING`, `StandardLevel.SEVERE` (ERROR).
+* **Default:** If absent, logs at **ERROR**.
 
 **Example**
 
@@ -102,24 +131,110 @@ public void validate(@Attribute("order.id") String orderId) { /* ... */ }
 
 ### `@Attribute` *(parameter-level)*
 
-Adds a parameter’s value to the **current TelemetryHolder’s attributes** when the method runs.
+Binds a method parameter to the current event’s attributes.
 
-* **Key name:** `value()` from the annotation or the Java parameter name.
-* **Conversion:**
+**Key rules:**
 
-    * **Simple types** (String, primitives/boxed, enums, BigDecimal, etc.) → `toString()`.
-    * **Complex types** → `Map<String,Object>` via configured **`ObjectMapper.convertValue(value, Map.class)`**.
-* **Nulls:** Skipped unless `recordNull = true`.
+* Key name is taken from the annotation value or parameter name.
+* **Simple types** → stored as `toString()`.
+* **Complex types** → converted to `Map<String,Object>` via the configured `ObjectMapper`.
+* Nulls skipped unless `recordNull = true`.
 
 **Example**
 
 ```java
 @Step(name = "payment.process")
 public void process(
-    @Attribute("payment") Payment payment,   // complex → mapped to Map by ObjectMapper
-    @Attribute("request.id") String requestId // simple → toString()
+    @Attribute("payment") Payment payment,   // complex → map
+    @Attribute("request.id") String requestId // simple → string
 ) { /* ... */ }
 ```
+
+---
+
+## Programmatic Attribute Setting
+
+When you can’t bind attributes via parameters alone — for example, when you need to add context after starting a step — use the `TelemetryContext` bean.
+
+**Why use it?**
+
+* Works whether you’re in a Flow or Step.
+* Attributes are automatically applied to the **current scope**.
+* Reduces boilerplate for “late” attributes.
+
+**Bean:**
+
+```java
+@Component
+public class TelemetryContext {
+    private final TelemetryProcessorSupport support;
+    public TelemetryContext(TelemetryProcessorSupport support) { this.support = support; }
+
+    public void put(String key, Object value) {
+        TelemetryHolder holder = support.currentHolder();
+        if (holder != null) {
+            holder.contextPut(key, value);
+        }
+    }
+
+    public void putAll(Map<String, ?> map) {
+        if (map != null && !map.isEmpty()) {
+            TelemetryHolder holder = support.currentHolder();
+            if (holder != null) {
+                for (Map.Entry<String, ?> e : map.entrySet()) {
+                    holder.contextPut(e.getKey(), e.getValue());
+                }
+            }
+        }
+    }
+}
+```
+
+**Example:**
+
+```java
+@Service
+@RequiredArgsConstructor
+class PaymentService {
+    private final TelemetryContext telemetry;
+
+    @Step(name = "payment.charge")
+    public void charge(String userId, long amountCents) {
+        telemetry.put("user.id", userId);
+        telemetry.put("amount.cents", amountCents);
+        // ...
+    }
+}
+```
+
+---
+
+## Attribute Lifecycle Diagram
+
+```text
+┌──────────────────────┐
+│ Method Entry (@Flow) │
+└───────┬──────────────┘
+        │
+        ▼
+Bind attributes from @Attribute parameters
+        │
+        ▼
+[Optional] Application calls TelemetryContext.put / putAll
+        │
+        ▼
+Attributes merged into current TelemetryHolder
+        │
+        ▼
+Event emitted (Flow or Step)
+        │
+        ▼
+Attributes serialized → Receivers → Storage/Export
+```
+
+* **`@Attribute` binding** happens **immediately** on method entry.
+* **`TelemetryContext`** calls can happen **any time before event completion**.
+* The final attribute set is **merged** and persisted when the event closes.
 
 ---
 
@@ -130,99 +245,21 @@ Step called
   ├─ Active Flow?
   │    ├─ YES → Emit child event
   │    └─ NO  → Promote to Flow event
-  │              ├─ Log promotion warning (level from @PromotionAlert or ERROR if absent)
+  │              ├─ Log promotion warning
   │              └─ Continue as Flow event
 ```
 
 ---
 
-## Logging Behavior (Promotion)
-
-When a `@Step` is promoted:
-
-1. Create Flow event using the step’s name.
-2. Emit **one** promotion warning log:
-
-    * Level = from `@PromotionAlert(level=…)` if present.
-    * Level = ERROR if absent.
-3. Continue execution as a Flow event (no additional logging tied to `@PromotionAlert`).
-
----
-
 ## Telemetry Receivers
 
-The current `TelemetryReceiver` interface provides **three lifecycle callbacks**:
+Obsinity provides lifecycle hooks via `TelemetryReceiver`:
 
 ```java
-package com.obsinity.telemetry.receivers;
-
-import com.obsinity.telemetry.model.TelemetryHolder;
-import java.util.List;
-
-/**
- * Receives flow lifecycle notifications.
- */
 public interface TelemetryReceiver {
-    /** Called when any flow (root or nested) is opened. */
     default void flowStarted(TelemetryHolder holder) {}
-
-    /** Called when any flow (root or nested) is finished. */
     default void flowFinished(TelemetryHolder holder) {}
-
-    /**
-     * Called once when a root flow finishes, with all finished flows
-     * (root + all nested) that completed within that root. Each holder has endTimestamp set.
-     */
     default void rootFlowFinished(List<TelemetryHolder> completed) {}
-}
-```
-
-### Simple logging receiver
-
-Logs one concise line on start/finish and summarizes the root flow:
-
-```java
-package com.example.telemetrydemo.telemetry;
-
-import com.obsinity.telemetry.model.TelemetryHolder;
-import com.obsinity.telemetry.receivers.TelemetryReceiver;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
-
-import java.util.List;
-
-@Component
-public class SimpleLoggingReceiver implements TelemetryReceiver {
-    private static final Logger log = LoggerFactory.getLogger(SimpleLoggingReceiver.class);
-
-    @Override
-    public void flowStarted(TelemetryHolder h) {
-        log.info("[telemetry] START name={}, kind={}, spanKind={}",
-                 safe(() -> h.getName()),
-                 safe(() -> String.valueOf(h.getKind())),
-                 safe(() -> String.valueOf(h.getSpanKind())));
-    }
-
-    @Override
-    public void flowFinished(TelemetryHolder h) {
-        log.info("[telemetry] FINISH name={}, durationMs={}, error={}",
-                 safe(() -> h.getName()),
-                 safe(() -> h.getDurationMs()),
-                 safe(() -> h.isError()));
-    }
-
-    @Override
-    public void rootFlowFinished(List<TelemetryHolder> completed) {
-        // first element is typically the root; adjust if your processor orders differently
-        TelemetryHolder root = completed.isEmpty() ? null : completed.get(0);
-        log.info("[telemetry] ROOT DONE name={}, totalFlows={}, rootError={}",
-                 safe(() -> root != null ? root.getName() : null),
-                 completed.size(),
-                 safe(() -> root != null && root.isError()));
-    }
-
-    private static <T> T safe(java.util.function.Supplier<T> s) { try { return s.get(); } catch (Throwable e) { return null; } }
 }
 ```
 
@@ -230,99 +267,42 @@ public class SimpleLoggingReceiver implements TelemetryReceiver {
 
 ## Minimal Spring Boot Sample
 
-### `Application.java`
+**Domain**
 
 ```java
-package com.example.telemetrydemo;
-
-import org.springframework.boot.SpringBootConfiguration;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.context.annotation.ComponentScan;
-import org.springframework.context.annotation.EnableAspectJAutoProxy;
-
-@SpringBootConfiguration
-@EnableAutoConfiguration
-@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
-@ComponentScan
-public class Application {
-    public static void main(String[] args) {
-        org.springframework.boot.SpringApplication.run(Application.class, args);
-    }
-}
-```
-
-### Demo domain
-
-```java
-package com.example.telemetrydemo.domain;
-
-import java.math.BigDecimal;
-
 public record Payment(String method, BigDecimal amount, String currency) {}
 public record Receipt(String id) {}
 ```
 
-### `OrderService.java`
+**Service**
 
 ```java
-package com.example.telemetrydemo.service;
-
-import com.example.telemetrydemo.domain.Payment;
-import com.example.telemetrydemo.domain.Receipt;
-import com.obsinity.telemetry.annotations.Attribute;
-import com.obsinity.telemetry.annotations.Flow;
-import com.obsinity.telemetry.annotations.Kind;
-import com.obsinity.telemetry.annotations.PromotionAlert;
-import com.obsinity.telemetry.annotations.Step;
-import io.opentelemetry.api.trace.SpanKind;
-import org.springframework.stereotype.Service;
-
-import java.math.BigDecimal;
-import java.util.UUID;
-import java.util.logging.StandardLevel;
-
 @Service
-@Kind(spanKind = SpanKind.SERVER) // default SpanKind for methods here
+@Kind(spanKind = SpanKind.SERVER)
 public class OrderService {
-
     @Flow(name = "checkout.process")
     public Receipt checkout(@Attribute("order.id") String orderId) {
-        validate(orderId, new BigDecimal("99.99")); // child event
-        charge(orderId, new Payment("card", new BigDecimal("99.99"), "EUR")); // child (CLIENT)
-        persist(orderId); // child event
+        validate(orderId, new BigDecimal("99.99"));
+        charge(orderId, new Payment("card", new BigDecimal("99.99"), "EUR"));
+        persist(orderId);
         return new Receipt(UUID.randomUUID().toString());
     }
-
     @Step(name = "checkout.validate")
-    @PromotionAlert(level = StandardLevel.WARNING) // if promoted, warn
+    @PromotionAlert(level = StandardLevel.WARNING)
     public void validate(@Attribute("order.id") String orderId,
-                         @Attribute("order.total") BigDecimal total) {
-        // validation
-    }
-
+                         @Attribute("order.total") BigDecimal total) {}
     @Step(name = "checkout.charge")
     @Kind(spanKind = SpanKind.CLIENT)
     public void charge(@Attribute("order.id") String orderId,
-                       @Attribute("payment") Payment payment) {
-        // call provider
-    }
-
+                       @Attribute("payment") Payment payment) {}
     @Step(name = "checkout.persist")
-    public void persist(@Attribute("order.id") String orderId) {
-        // store
-    }
+    public void persist(@Attribute("order.id") String orderId) {}
 }
 ```
 
-### `OrderController.java`
+**Controller** (with `@Flow`)
 
 ```java
-package com.example.telemetrydemo.web;
-
-import com.example.telemetrydemo.domain.Receipt;
-import com.example.telemetrydemo.service.OrderService;
-import org.springframework.web.bind.annotation.*;
-
 @RestController
 @RequestMapping("/api/orders")
 public class OrderController {
@@ -330,14 +310,9 @@ public class OrderController {
     public OrderController(OrderService service) { this.service = service; }
 
     @PostMapping("/{orderId}/checkout")
+    @Flow(name = "api.order.checkout") // top-level entry point
     public Receipt checkout(@PathVariable String orderId) {
         return service.checkout(orderId);
-    }
-
-    // Intentionally calls a @Step directly (no @Flow) to demonstrate promotion + PromotionAlert
-    @PostMapping("/{orderId}/validate")
-    public void validate(@PathVariable String orderId) {
-        service.validate(orderId, null);
     }
 }
 ```
@@ -346,11 +321,8 @@ public class OrderController {
 
 ## Best Practices
 
-* **Names:** Always OTEL-style lowercase, dot-separated for `@Flow` and `@Step`.
-* **Attributes:** Keep keys stable; avoid high-cardinality values unless needed.
-* **PromotionAlert:**
-
-    * INFO for benign entry-points
-    * WARNING for unexpected/non-critical
-    * ERROR (default) for serious misuse
-* **Complex Objects:** Ensure your global `ObjectMapper` is configured to convert domain objects cleanly to `Map<String,Object>`.
+* **Name consistently**: OTEL-style lowercase dotted paths.
+* **Stable keys**: Avoid per-request UUIDs or highly dynamic values unless needed.
+* **Parameter binding vs TelemetryContext**: Use `@Attribute` for parameters, `TelemetryContext` for runtime/late binding.
+* **Promotion alert severity**: INFO for benign, WARNING for unexpected, ERROR for misuse.
+* **Keep attributes lean**: Especially for high-volume events.

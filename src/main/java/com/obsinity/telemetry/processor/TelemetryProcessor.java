@@ -26,6 +26,8 @@ public class TelemetryProcessor {
 
 	/**
 	 * Main orchestration of flow start/finish and step event emission.
+	 * - If a new flow starts, open the holder, push it, notify, and (if root) start a batch.
+	 * - For nested steps, create the event at entry, bind params immediately, then finalize on exit.
 	 */
 	public final Object proceed(final ProceedingJoinPoint joinPoint, final FlowOptions options) throws Throwable {
 		final boolean active = telemetryProcessorSupport.hasActiveFlow();
@@ -34,14 +36,37 @@ public class TelemetryProcessor {
 		final TelemetryHolder parent = telemetryProcessorSupport.currentHolder();
 		final boolean opensRoot = startsNewFlow && parent == null;
 
-		// Step (when not starting a new flow) → emit event
 		final boolean stepAnnotated = options != null && options.autoFlowLevel() != StandardLevel.OFF;
 		final boolean nestedStep = stepAnnotated && active && !startsNewFlow;
-		final long stepStartNanos = nestedStep ? System.nanoTime() : 0L;
 
 		final TelemetryHolder opened = startsNewFlow
 			? openFlowIfNeeded(joinPoint, options, parent, opensRoot)
 			: null;
+
+		// Step entry: create & append the event, push it so app can contextPut() into it immediately
+		if (nestedStep) {
+			final TelemetryHolder curr = telemetryProcessorSupport.currentHolder();
+			if (curr != null) {
+				final Instant now = Instant.now();
+				final long epochStart = telemetryProcessorSupport.unixNanos(now);
+				final long startNanoTime = System.nanoTime();
+
+				final Signature sig = joinPoint.getSignature();
+				final Map<String, Object> base = new LinkedHashMap<>();
+				base.put("class", sig.getDeclaringTypeName());
+				base.put("method", sig.getName());
+
+				final TelemetryHolder.OEvent ev = curr.beginStepEvent(
+					resolveStepName(joinPoint, options),
+					epochStart,
+					startNanoTime,
+					new TelemetryHolder.OAttributes(base)
+				);
+
+				// Enrich with @Attribute-annotated params at entry (event already exists)
+				telemetryAttributeBinder.bind(ev, joinPoint);
+			}
+		}
 
 		try {
 			telemetryProcessorSupport.safe(new TelemetryProcessorSupport.UnsafeRunnable() {
@@ -54,7 +79,7 @@ public class TelemetryProcessor {
 			final Object result = joinPoint.proceed();
 
 			if (nestedStep) {
-				recordStepEvent(joinPoint, options, stepStartNanos, null);
+				finalizeCurrentEvent(null);
 			}
 
 			telemetryProcessorSupport.safe(new TelemetryProcessorSupport.UnsafeRunnable() {
@@ -66,7 +91,7 @@ public class TelemetryProcessor {
 			return result;
 		} catch (final Throwable t) {
 			if (nestedStep) {
-				recordStepEvent(joinPoint, options, stepStartNanos, t);
+				finalizeCurrentEvent(t);
 			}
 			telemetryProcessorSupport.safe(new TelemetryProcessorSupport.UnsafeRunnable() {
 				@Override
@@ -156,6 +181,36 @@ public class TelemetryProcessor {
 		} finally {
 			telemetryProcessorSupport.pop(opened);
 		}
+	}
+
+	private String resolveStepName(final ProceedingJoinPoint joinPoint, final FlowOptions options) {
+		if (options != null && options.name() != null && !options.name().isBlank()) {
+			return options.name();
+		}
+		return joinPoint.getSignature().getName();
+	}
+
+	private void finalizeCurrentEvent(final Throwable errorOrNull) {
+		final TelemetryHolder curr = telemetryProcessorSupport.currentHolder();
+		if (curr == null) {
+			return;
+		}
+		final Instant now = Instant.now();
+		final long epochEnd = telemetryProcessorSupport.unixNanos(now);
+		final long endNanoTime = System.nanoTime();
+
+		final Map<String, Object> updates = new LinkedHashMap<>();
+		if (errorOrNull == null) {
+			updates.put("result", "success");
+		} else {
+			updates.put("result", "error");
+			updates.put("error.type", errorOrNull.getClass().getName());
+			updates.put("error.message", String.valueOf(errorOrNull.getMessage()));
+		}
+
+		// Holder will set phase=finish, compute duration from monotonic nanos,
+		// and replace the last event instance with one carrying endEpochNanos.
+		curr.endStepEvent(epochEnd, endNanoTime, updates);
 	}
 
 	/* --------------------- existing methods below unchanged --------------------- */
@@ -255,49 +310,5 @@ public class TelemetryProcessor {
 	protected void onError(final TelemetryHolder current, final Throwable error,
 						   final FlowOptions options) {
 		// Intentionally empty: override to observe errors
-	}
-
-	private void recordStepEvent(final ProceedingJoinPoint joinPoint, final FlowOptions options, final long startNanos, final Throwable error) {
-		final TelemetryHolder curr = telemetryProcessorSupport.currentHolder();
-		if (curr == null) {
-			return;
-		}
-
-		final Signature sig = joinPoint.getSignature();
-		final String stepName;
-		if (options != null && options.name() != null && !options.name().isBlank()) {
-			stepName = options.name();
-		} else {
-			stepName = sig.getName();
-		}
-
-		final Instant now = Instant.now();
-		final long unixNanos = telemetryProcessorSupport.unixNanos(now);
-		final long endNanos = System.nanoTime();
-		final long durNanos = startNanos > 0L ? (endNanos - startNanos) : 0L;
-
-		final Map<String, Object> attrs = new LinkedHashMap<>();
-		attrs.put("phase", "finish");
-		attrs.put("duration.nanos", durNanos);
-		attrs.put("class", sig.getDeclaringTypeName());
-		attrs.put("method", sig.getName());
-		if (error == null) {
-			attrs.put("result", "success");
-		} else {
-			attrs.put("result", "error");
-			attrs.put("error.type", error.getClass().getName());
-			attrs.put("error.message", String.valueOf(error.getMessage()));
-		}
-
-		final TelemetryHolder.OEvent event = new TelemetryHolder.OEvent(
-			stepName,
-			unixNanos,
-			endNanos,
-			new TelemetryHolder.OAttributes(attrs),
-			0
-		);
-
-		telemetryAttributeBinder.bind(event, joinPoint);
-		curr.events().add(event); // mutate current holder (no snapshot)
 	}
 }

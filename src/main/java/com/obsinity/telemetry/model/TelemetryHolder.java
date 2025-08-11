@@ -16,7 +16,9 @@ import io.opentelemetry.sdk.trace.data.LinkData;
 import io.opentelemetry.sdk.trace.data.StatusData;
 
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +36,7 @@ import java.util.stream.Collectors;
  * <ul>
  *   <li>{@link OResource} (wraps {@link Resource})</li>
  *   <li>{@link OAttributes} (wraps {@link Attributes})</li>
- *   <li>{@link OEvent} (wraps {@link EventData} + adds {@code endEpochNanos})</li>
+ *   <li>{@link OEvent} (wraps {@link EventData} + adds {@code endEpochNanos} and monotonic start)</li>
  *   <li>{@link OLink} (wraps {@link LinkData})</li>
  *   <li>{@link OStatus} (wraps {@link StatusData})</li>
  * </ul>
@@ -54,17 +56,20 @@ public class TelemetryHolder {
 	private String spanId;
 	private String parentSpanId;
 	private SpanKind kind;                 // OTEL enum
-	private OResource resource;          // wrapper
+	private OResource resource;            // wrapper
 	private OAttributes attributes;        // wrapper
 	private List<OEvent> events;           // mutable
-	private List<OLink> links;            // mutable
-	private OStatus status;           // wrapper
+	private List<OLink> links;             // mutable
+	private OStatus status;                // wrapper
 
 	/* ── Obsinity-native ─────────────────────────────────────────── */
-	private String serviceId;     // required here OR in resource["service.id"]
+	private String serviceId;              // required here OR in resource["service.id"]
 	private String correlationId;
 	private Map<String, Object> extensions;    // mutable free-form
 	private Boolean synthetic;
+
+	/* ── Event context cursor (for nested steps) ──────────────────── */
+	private final Deque<OEvent> eventStack = new ArrayDeque<>();
 
 	/**
 	 * Full constructor (validates service id consistency).
@@ -110,73 +115,23 @@ public class TelemetryHolder {
 	}
 
 	/* ========================= Accessors (record-like) ========================= */
-	public String name() {
-		return name;
-	}
-
-	public Instant timestamp() {
-		return timestamp;
-	}
-
-	public Long timeUnixNano() {
-		return timeUnixNano;
-	}
-
-	public Instant endTimestamp() {
-		return endTimestamp;
-	}
-
-	public String traceId() {
-		return traceId;
-	}
-
-	public String spanId() {
-		return spanId;
-	}
-
-	public String parentSpanId() {
-		return parentSpanId;
-	}
-
-	public SpanKind kind() {
-		return kind;
-	}
-
-	public OResource resource() {
-		return resource;
-	}
-
-	public OAttributes attributes() {
-		return attributes;
-	}
-
-	public List<OEvent> events() {
-		return events;
-	}           // MUTABLE
-
-	public List<OLink> links() {
-		return links;
-	}              // MUTABLE
-
-	public OStatus status() {
-		return status;
-	}
-
-	public String serviceId() {
-		return serviceId;
-	}
-
-	public String correlationId() {
-		return correlationId;
-	}
-
-	public Map<String, Object> extensions() {
-		return extensions;
-	} // MUTABLE
-
-	public Boolean synthetic() {
-		return synthetic;
-	}
+	public String name() { return name; }
+	public Instant timestamp() { return timestamp; }
+	public Long timeUnixNano() { return timeUnixNano; }
+	public Instant endTimestamp() { return endTimestamp; }
+	public String traceId() { return traceId; }
+	public String spanId() { return spanId; }
+	public String parentSpanId() { return parentSpanId; }
+	public SpanKind kind() { return kind; }
+	public OResource resource() { return resource; }
+	public OAttributes attributes() { return attributes; }
+	public List<OEvent> events() { return events; }           // MUTABLE
+	public List<OLink> links() { return links; }              // MUTABLE
+	public OStatus status() { return status; }
+	public String serviceId() { return serviceId; }
+	public String correlationId() { return correlationId; }
+	public Map<String, Object> extensions() { return extensions; } // MUTABLE
+	public Boolean synthetic() { return synthetic; }
 
 	/* Minimal mutators we actually use from the processor */
 	public void setEndTimestamp(Instant endTimestamp) {
@@ -184,6 +139,87 @@ public class TelemetryHolder {
 	}
 
 	/* ========================= Behavior ========================= */
+
+	/**
+	 * Application-facing: write to the current context
+	 * (top event if present, else flow attributes).
+	 */
+	public void contextPut(final String key, final Object value) {
+		if (key == null || key.isBlank()) {
+			return;
+		}
+		final OEvent currentEvent = eventStack.peekLast();
+		if (currentEvent != null) {
+			currentEvent.attributes().put(key, value);
+		} else {
+			attributes().put(key, value);
+		}
+	}
+
+	/**
+	 * Processor-facing: step entry — append an event and push it on the stack so
+	 * app code can {@link #contextPut(String, Object)} into it immediately.
+	 *
+	 * @param name          event name
+	 * @param epochNanos    wall-clock start time (for OTEL/export)
+	 * @param startNanoTime monotonic start time (for accurate duration; not serialized)
+	 * @param initialAttrs  base attributes to seed the event with (nullable)
+	 * @return the newly created event (already appended)
+	 */
+	public OEvent beginStepEvent(final String name,
+								 final long epochNanos,
+								 final long startNanoTime,
+								 final OAttributes initialAttrs) {
+		final OAttributes attrs = (initialAttrs != null)
+			? initialAttrs
+			: new OAttributes(new LinkedHashMap<>());
+		final OEvent ev = new OEvent(name, epochNanos, 0L, attrs, 0, startNanoTime);
+		events().add(ev);
+		eventStack.addLast(ev);
+		return ev;
+	}
+
+	/**
+	 * Processor-facing: step exit — finalize the current event.
+	 * Sets phase=finish, merges updates, sets duration from monotonic nanos,
+	 * and replaces the last list element with a copy carrying endEpochNanos.
+	 */
+	public void endStepEvent(final long endEpochNanos,
+							 final long endNanoTime,
+							 final Map<String, Object> updates) {
+		final OEvent ev = eventStack.pollLast();
+		if (ev == null) {
+			// Intentionally empty: no active event to end
+			return;
+		}
+
+		final OAttributes attrs = ev.attributes();
+		if (updates != null && !updates.isEmpty()) {
+			for (Map.Entry<String, Object> e : updates.entrySet()) {
+				attrs.put(e.getKey(), e.getValue());
+			}
+		}
+
+		final long start = ev.getStartNanoTime();
+		final long duration = (start > 0L && endNanoTime > 0L) ? (endNanoTime - start) : 0L;
+		attrs.put("duration.nanos", duration);
+		attrs.put("phase", "finish");
+
+		final List<OEvent> list = events();
+		final int lastIdx = list.isEmpty() ? -1 : list.size() - 1;
+		if (lastIdx >= 0 && list.get(lastIdx) == ev) {
+			list.set(lastIdx, new OEvent(
+				ev.name(),
+				ev.epochNanos(),
+				endEpochNanos,
+				attrs,
+				ev.droppedAttributesCount(),
+				ev.getStartNanoTime()
+			));
+		} else {
+			// Intentionally empty: unexpected ordering (should not happen)
+		}
+	}
 
 	/**
 	 * Resolve service id with top-level preference, fallback to resource["service.id"].
@@ -228,9 +264,7 @@ public class TelemetryHolder {
 			this.attributes = attributes;
 		}
 
-		public OAttributes attributes() {
-			return attributes;
-		}
+		public OAttributes attributes() { return attributes; }
 
 		/* Converters */
 		public Resource toOtel() {
@@ -253,9 +287,7 @@ public class TelemetryHolder {
 			this.asMap = (asMap != null ? asMap : new LinkedHashMap<>());
 		}
 
-		public Map<String, Object> asMap() {
-			return asMap;
-		}
+		public Map<String, Object> asMap() { return asMap; }
 
 		public void put(String key, Object value) {
 			if (key != null) asMap.put(key, value);
@@ -297,44 +329,42 @@ public class TelemetryHolder {
 	}
 
 	/**
-	 * Wrapper around OTEL {@link EventData}, with an extra {@code endEpochNanos}.
+	 * Wrapper around OTEL {@link EventData}, with extra fields:
+	 * - {@code endEpochNanos} (absolute end time for exporters)
+	 * - {@code startNanoTime} (transient, monotonic for accurate duration)
 	 * Use {@link #toOtel()} when you need an OTEL-compatible view.
 	 */
 	@JsonInclude(Include.NON_NULL)
 	public static final class OEvent {
 		private final String name;
-		private final long epochNanos;           // start
-		private final Long endEpochNanos;        // end (optional)
+		private final long epochNanos;                 // start (wall clock)
+		private final Long endEpochNanos;              // end (wall clock)
 		private final OAttributes attributes;
-		private final Integer droppedAttributesCount; // optional, contributes to total count
+		private final Integer droppedAttributesCount;  // optional, contributes to total count
 
-		public OEvent(String name, long epochNanos, Long endEpochNanos, OAttributes attributes, Integer droppedAttributesCount) {
+		// NEW: monotonic start for accurate duration; not serialized
+		private final transient long startNanoTime;
+
+		public OEvent(String name,
+					  long epochNanos,
+					  Long endEpochNanos,
+					  OAttributes attributes,
+					  Integer droppedAttributesCount,
+					  long startNanoTime) {
 			this.name = Objects.requireNonNull(name, "name");
 			this.epochNanos = epochNanos;
 			this.endEpochNanos = endEpochNanos;
 			this.attributes = attributes == null ? new OAttributes(new LinkedHashMap<>()) : attributes;
 			this.droppedAttributesCount = droppedAttributesCount;
+			this.startNanoTime = startNanoTime;
 		}
 
-		public String name() {
-			return name;
-		}
-
-		public long epochNanos() {
-			return epochNanos;
-		}
-
-		public Long endEpochNanos() {
-			return endEpochNanos;
-		}
-
-		public OAttributes attributes() {
-			return attributes;
-		}
-
-		public Integer droppedAttributesCount() {
-			return droppedAttributesCount;
-		}
+		public String name() { return name; }
+		public long epochNanos() { return epochNanos; }
+		public Long endEpochNanos() { return endEpochNanos; }
+		public OAttributes attributes() { return attributes; }
+		public Integer droppedAttributesCount() { return droppedAttributesCount; }
+		public long getStartNanoTime() { return startNanoTime; }
 
 		/**
 		 * OTEL view (no end time in the interface; exporter can still use {@link #endEpochNanos()}).
@@ -344,24 +374,13 @@ public class TelemetryHolder {
 			final int total = (droppedAttributesCount == null ? otelAttrs.size() : otelAttrs.size() + droppedAttributesCount);
 			return new EventData() {
 				@Override
-				public long getEpochNanos() {
-					return epochNanos;
-				}
-
+				public long getEpochNanos() { return epochNanos; }
 				@Override
-				public String getName() {
-					return name;
-				}
-
+				public String getName() { return name; }
 				@Override
-				public Attributes getAttributes() {
-					return otelAttrs;
-				}
-
+				public Attributes getAttributes() { return otelAttrs; }
 				@Override
-				public int getTotalAttributeCount() {
-					return total;
-				}
+				public int getTotalAttributeCount() { return total; }
 			};
 		}
 	}
@@ -381,17 +400,9 @@ public class TelemetryHolder {
 			this.attributes = attributes == null ? new OAttributes(new LinkedHashMap<>()) : attributes;
 		}
 
-		public String traceId() {
-			return traceId;
-		}
-
-		public String spanId() {
-			return spanId;
-		}
-
-		public OAttributes attributes() {
-			return attributes;
-		}
+		public String traceId() { return traceId; }
+		public String spanId() { return spanId; }
+		public OAttributes attributes() { return attributes; }
 
 		public LinkData toOtel() {
 			SpanContext ctx = SpanContext.create(traceId, spanId, TraceFlags.getSampled(), TraceState.getDefault());
@@ -417,13 +428,8 @@ public class TelemetryHolder {
 			this.message = message;
 		}
 
-		public StatusCode code() {
-			return code;
-		}
-
-		public String message() {
-			return message;
-		}
+		public StatusCode code() { return code; }
+		public String message() { return message; }
 
 		public StatusData toOtel() {
 			return StatusData.create(code, message);
