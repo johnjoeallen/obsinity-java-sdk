@@ -257,8 +257,15 @@ public class TelemetryHolder {
 			return asMap;
 		}
 
+		/**
+		 * Q: Should be ObjectMapper things that are not basic types?
+		 * @param key
+		 * @param value
+		 */
 		public void put(String key, Object value) {
-			if (key != null) asMap.put(key, value);
+			if (key != null) {
+				asMap.put(key, value);
+			}
 		}
 
 		/* Converters */
