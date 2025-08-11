@@ -253,15 +253,124 @@ Step called
 
 ## Telemetry Receivers
 
-Obsinity provides lifecycle hooks via `TelemetryReceiver`:
+Receivers allow application code to listen to the **flow lifecycle** and perform custom processing when telemetry events are started or finished.
+This is useful for:
+
+* Logging flow activity in a consistent, centralized way.
+* Forwarding telemetry to external systems (e.g., message queues, observability platforms, audit stores).
+* Collecting aggregate metrics.
+* Triggering side-effects based on specific flow or event conditions.
+
+### Lifecycle Callbacks
+
+The `TelemetryReceiver` interface defines three lifecycle methods:
 
 ```java
+package com.obsinity.telemetry.receivers;
+
+import com.obsinity.telemetry.model.TelemetryHolder;
+import java.util.List;
+
+/**
+ * Receives flow lifecycle notifications.
+ */
 public interface TelemetryReceiver {
+    /** Called when any flow (root or nested) is opened. */
     default void flowStarted(TelemetryHolder holder) {}
+
+    /** Called when any flow (root or nested) is finished. */
     default void flowFinished(TelemetryHolder holder) {}
+
+    /**
+     * Called once when a root flow finishes, with all finished flows
+     * (root + all nested) that completed within that root. Each holder has endTimestamp set.
+     */
     default void rootFlowFinished(List<TelemetryHolder> completed) {}
 }
 ```
+
+**Key points:**
+
+* **`flowStarted`** — called for *every* flow, including child flows created by `@Step`.
+* **`flowFinished`** — called for *every* flow when it completes.
+* **`rootFlowFinished`** — called **once** when the root flow finishes.
+  This callback includes the *root flow* and **all nested flows** in a `List` (in completion order).
+
+---
+
+### Example: Simple Logging Receiver
+
+The following receiver writes concise log lines when flows start and finish, and when a root flow completes. It also logs useful identifiers like `traceId` and `spanId` to allow cross-system correlation.
+
+```java
+package com.example.telemetrydemo.telemetry;
+
+import com.obsinity.telemetry.model.TelemetryHolder;
+import com.obsinity.telemetry.receivers.TelemetryReceiver;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Component
+public class SimpleLoggingReceiver implements TelemetryReceiver {
+    private static final Logger log = LoggerFactory.getLogger(SimpleLoggingReceiver.class);
+
+    @Override
+    public void flowStarted(TelemetryHolder h) {
+        log.info("[telemetry] START name={}, kind={}, traceId={}, spanId={}",
+                 h.name(), h.kind(), h.traceId(), h.spanId());
+    }
+
+    @Override
+    public void flowFinished(TelemetryHolder h) {
+        Long durationMs = null;
+        Instant start = h.timestamp();
+        Instant end = h.endTimestamp();
+        if (start != null && end != null) {
+            durationMs = Duration.between(start, end).toMillis();
+        }
+        int events = (h.events() == null) ? 0 : h.events().size();
+
+        log.info("[telemetry] FINISH name={}, kind={}, traceId={}, spanId={}, durationMs={}, events={}",
+                 h.name(), h.kind(), h.traceId(), h.spanId(), durationMs, events);
+    }
+
+    @Override
+    public void rootFlowFinished(List<TelemetryHolder> completed) {
+        String rootName = (completed == null || completed.isEmpty()) ? null : completed.get(0).name();
+        String traceId  = (completed == null || completed.isEmpty()) ? null : completed.get(0).traceId();
+        int count = (completed == null) ? 0 : completed.size();
+        String names = (completed == null) ? "[]"
+                : completed.stream().map(TelemetryHolder::name).collect(Collectors.toList()).toString();
+
+        log.info("[telemetry] ROOT DONE traceId={}, root={}, flows={}, names={}",
+                 traceId, rootName, count, names);
+    }
+}
+```
+
+---
+
+### How to Use Receivers
+
+1. **Create a class** implementing `TelemetryReceiver`.
+2. **Mark it with `@Component`** (or register as a bean) so Spring can discover it.
+3. **Implement the callbacks** you care about — you don’t need to implement all three.
+4. **Log, export, or trigger side effects** in your callback code.
+
+---
+
+**Example use cases:**
+
+* Export all completed flows to an analytics system.
+* Trigger an alert if a specific flow name finishes with `error=true`.
+* Measure high-level metrics like “total checkout flows per minute”.
+* Capture timing breakdowns for performance tuning.
 
 ---
 
