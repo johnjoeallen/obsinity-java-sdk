@@ -1,15 +1,16 @@
 package com.obsinity.telemetry.aspect;
 
 import com.obsinity.telemetry.annotations.AutoFlow;
+import com.obsinity.telemetry.annotations.Attribute;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
 import com.obsinity.telemetry.annotations.Step;
-import com.obsinity.telemetry.annotations.Attribute;
 import com.obsinity.telemetry.model.TelemetryHolder;
 import com.obsinity.telemetry.processor.AttributeParamExtractor;
 import com.obsinity.telemetry.processor.TelemetryAttributeBinder;
 import com.obsinity.telemetry.processor.TelemetryProcessor;
 import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
+import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 import com.obsinity.telemetry.receivers.TelemetryReceiver;
 import io.opentelemetry.api.trace.SpanKind;
 import org.junit.jupiter.api.BeforeEach;
@@ -74,11 +75,17 @@ class TelemetryIntegrationBootTest {
 			return new TelemetryProcessorSupport();
 		}
 
+		/** Build the async dispatch bus from all discovered receivers. */
+		@Bean
+		TelemetryDispatchBus telemetryDispatchBus(List<TelemetryReceiver> receivers) {
+			return new TelemetryDispatchBus(receivers);
+		}
+
 		@Bean
 		TelemetryProcessor telemetryProcessor(TelemetryAttributeBinder binder,
 											  TelemetryProcessorSupport support,
-											  List<TelemetryReceiver> receivers) {
-			return new TelemetryProcessor(binder, support, receivers) {
+											  TelemetryDispatchBus dispatchBus) {
+			return new TelemetryProcessor(binder, support, dispatchBus) {
 				@Override
 				protected TelemetryHolder.OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
 					// Base attributes for the flow
