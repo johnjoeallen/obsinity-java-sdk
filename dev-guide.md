@@ -162,34 +162,6 @@ When you can’t bind attributes via parameters alone — for example, when you 
 * Attributes are automatically applied to the **current scope**.
 * Reduces boilerplate for “late” attributes.
 
-**Bean:**
-
-```java
-@Component
-public class TelemetryContext {
-    private final TelemetryProcessorSupport support;
-    public TelemetryContext(TelemetryProcessorSupport support) { this.support = support; }
-
-    public void put(String key, Object value) {
-        TelemetryHolder holder = support.currentHolder();
-        if (holder != null) {
-            holder.contextPut(key, value);
-        }
-    }
-
-    public void putAll(Map<String, ?> map) {
-        if (map != null && !map.isEmpty()) {
-            TelemetryHolder holder = support.currentHolder();
-            if (holder != null) {
-                for (Map.Entry<String, ?> e : map.entrySet()) {
-                    holder.contextPut(e.getKey(), e.getValue());
-                }
-            }
-        }
-    }
-}
-```
-
 **Example:**
 
 ```java

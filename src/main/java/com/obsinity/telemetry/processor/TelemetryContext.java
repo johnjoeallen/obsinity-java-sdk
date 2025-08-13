@@ -64,11 +64,13 @@ public class TelemetryContext {
 	 * @param key   attribute key; must not be {@code null}
 	 * @param value attribute value; may be {@code null}
 	 */
-	public void put(String key, Object value) {
+	public Object put(String key, Object value) {
 		TelemetryHolder holder = support.currentHolder();
 		if (holder != null) {
 			holder.contextPut(key, value);
 		}
+
+		return value;
 	}
 
 	/**
