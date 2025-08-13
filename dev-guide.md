@@ -412,9 +412,6 @@ Incoming boundary → `SERVER`. Outgoing dependency → `CLIENT`. Async send/rec
 * For `ROOT_FLOW_FINISHED`, declare **`List<TelemetryHolder>`** directly (no extra annotation).
 
 ---
-Got it — here’s a **cheat-sheet table** you can tack onto the end of the guide so developers have a quick visual reference.
-
----
 
 ## 📌 `@OnEvent` Patterns Cheat-Sheet
 
