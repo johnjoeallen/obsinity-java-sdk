@@ -1,6 +1,7 @@
 package com.obsinity.telemetry.receivers;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumMap;
@@ -14,6 +15,7 @@ import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.stereotype.Component;
 
 import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.annotations.Attribute;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.dispatch.AttrBindingException;
 import com.obsinity.telemetry.dispatch.BatchBinder;
@@ -30,7 +32,7 @@ import com.obsinity.telemetry.model.TelemetryHolder;
  */
 @Component
 public class TelemetryDispatchBus
-		implements com.obsinity.telemetry.processor.TelemetryProcessorSupport.TelemetryEventDispatcher {
+	implements com.obsinity.telemetry.processor.TelemetryProcessorSupport.TelemetryEventDispatcher {
 
 	private static final Logger log = LoggerFactory.getLogger(TelemetryDispatchBus.class);
 
@@ -42,7 +44,7 @@ public class TelemetryDispatchBus
 		this.scanner = scanner;
 		// Find only beans marked with @TelemetryEventHandler
 		Collection<Object> candidateBeans =
-				beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
+			beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
 
 		List<Handler> discovered = new ArrayList<>();
 		for (Object bean : candidateBeans) {
@@ -79,15 +81,15 @@ public class TelemetryDispatchBus
 
 			Object[] args;
 			try {
-				args = bindParams(h.binders(), holder);
+				args = bindParams(h, holder);
 			} catch (AttrBindingException ex) {
 				log.debug(
-						"Binding error for handler={} name={} phase={} key={}: {}",
-						h.id(),
-						holder.getName(),
-						phase,
-						ex.key(),
-						ex.getMessage());
+					"Binding error for handler={} name={} phase={} key={}: {}",
+					h.id(),
+					holder.getName(),
+					phase,
+					ex.key(),
+					ex.getMessage());
 				continue;
 			}
 
@@ -98,11 +100,11 @@ public class TelemetryDispatchBus
 				any = true;
 			} catch (Throwable t) {
 				log.warn(
-						"Handler invocation failed handler={} name={} phase={}: {}",
-						h.id(),
-						holder.getName(),
-						phase,
-						t.toString());
+					"Handler invocation failed handler={} name={} phase={}: {}",
+					h.id(),
+					holder.getName(),
+					phase,
+					t.toString());
 			}
 		}
 
@@ -127,21 +129,21 @@ public class TelemetryDispatchBus
 			if (!isBatchCapable) continue;
 
 			try {
-				Object[] args = bindBatchParams(h.binders(), batch);
+				Object[] args = bindBatchParams(h, batch);
 				Method m = h.method();
 				if (!m.canAccess(h.bean())) m.setAccessible(true);
 				m.invoke(h.bean(), args);
 			} catch (AttrBindingException ex) {
 				log.debug(
-						"Batch binding error handler={} phase=ROOT_FLOW_FINISHED key={}: {}",
-						h.id(),
-						ex.key(),
-						ex.getMessage());
+					"Batch binding error handler={} phase=ROOT_FLOW_FINISHED key={}: {}",
+					h.id(),
+					ex.key(),
+					ex.getMessage());
 			} catch (Throwable t) {
 				log.warn(
-						"Batch handler invocation failed handler={} phase=ROOT_FLOW_FINISHED: {}",
-						h.id(),
-						t.toString());
+					"Batch handler invocation failed handler={} phase=ROOT_FLOW_FINISHED: {}",
+					h.id(),
+					t.toString());
 			}
 		}
 	}
@@ -214,44 +216,122 @@ public class TelemetryDispatchBus
 		return missing;
 	}
 
-	private static Object[] bindParams(List<ParamBinder> binders, TelemetryHolder holder) {
-		Object[] args = new Object[binders.size()];
-		for (int i = 0; i < binders.size(); i++) {
-			ParamBinder b = binders.get(i);
-			if (b instanceof BatchBinder) {
-				// single-event dispatch: batch param not applicable
-				args[i] = null;
-			} else {
-				args[i] = b.bind(holder);
+	/**
+	 * Bind params for single-holder dispatch.
+	 * First tries declared ParamBinders; if a slot isn't provided by a binder, it falls back to:
+	 *  - TelemetryHolder injection
+	 *  - @Attribute(name="...") value from holder.attributes()
+	 */
+	private static Object[] bindParams(Handler h, TelemetryHolder holder) {
+		List<ParamBinder> binders = h.binders();
+		Method method = h.method();
+		Parameter[] params = method.getParameters();
+
+		Object[] args = new Object[params.length];
+		for (int i = 0; i < params.length; i++) {
+			Object val = null;
+
+			// 1) If a binder exists for this slot, use it.
+			if (i < binders.size()) {
+				ParamBinder b = binders.get(i);
+				if (b instanceof BatchBinder) {
+					// single-event dispatch: batch param not applicable
+					val = null;
+				} else if (b != null) {
+					val = b.bind(holder);
+				}
 			}
+
+			// 2) Fallbacks if binder didn't provide a value
+			if (val == null) {
+				Parameter p = params[i];
+
+				// Inject holder
+				if (TelemetryHolder.class.isAssignableFrom(p.getType())) {
+					val = holder;
+				} else {
+					// @Attribute on handler param
+					Attribute attr = p.getAnnotation(Attribute.class);
+					if (attr != null) {
+						Object raw = holder.attributes().asMap().get(attr.name());
+						val = coerce(raw, p.getType());
+					}
+				}
+			}
+
+			args[i] = val;
 		}
 		return args;
 	}
 
-	private static Object[] bindBatchParams(List<ParamBinder> binders, List<TelemetryHolder> batch) {
-		Object[] args = new Object[binders.size()];
-		for (int i = 0; i < binders.size(); i++) {
-			ParamBinder b = binders.get(i);
-			if (b instanceof BatchBinder bb) {
-				args[i] = bb.bindBatch(batch);
-			} else if (b instanceof HolderBinder) {
-				// if a handler also asked for a holder, pass the root (first) as a convenience
-				args[i] = batch.get(0);
-			} else {
-				// other binders don't apply in batch context
-				args[i] = null;
+	/**
+	 * Bind params for batch dispatch.
+	 * Supports BatchBinder, optional TelemetryHolder (root/first) injection, and @Attribute on handler params
+	 * sourced from the first holder in the batch.
+	 */
+	private static Object[] bindBatchParams(Handler h, List<TelemetryHolder> batch) {
+		List<ParamBinder> binders = h.binders();
+		Method method = h.method();
+		Parameter[] params = method.getParameters();
+
+		TelemetryHolder root = batch.get(0);
+		Object[] args = new Object[params.length];
+
+		for (int i = 0; i < params.length; i++) {
+			Object val = null;
+
+			// 1) Prefer declared binders
+			if (i < binders.size()) {
+				ParamBinder b = binders.get(i);
+				if (b instanceof BatchBinder bb) {
+					val = bb.bindBatch(batch);
+				} else if (b instanceof HolderBinder) {
+					// pass the root holder as convenience
+					val = root;
+				} else if (b != null) {
+					// allow other binders to pull from the root holder
+					val = b.bind(root);
+				}
 			}
+
+			// 2) Fallbacks if binder didn't provide a value
+			if (val == null) {
+				Parameter p = params[i];
+
+				if (List.class.isAssignableFrom(p.getType())) {
+					val = batch;
+				} else if (TelemetryHolder.class.isAssignableFrom(p.getType())) {
+					val = root;
+				} else {
+					Attribute attr = p.getAnnotation(Attribute.class);
+					if (attr != null) {
+						Object raw = root.attributes().asMap().get(attr.name());
+						val = coerce(raw, p.getType());
+					}
+				}
+			}
+
+			args[i] = val;
 		}
 		return args;
+	}
+
+	private static Object coerce(Object raw, Class<?> targetType) {
+		if (raw == null) return null;
+		if (targetType.isInstance(raw)) return raw;
+		// Most handler params will ask for String; add more converters as needed.
+		if (targetType == String.class) return String.valueOf(raw);
+		// simple numeric coercions could go here if required later
+		return raw; // best effort
 	}
 
 	private static void logMissing(Handler h, TelemetryHolder holder, Lifecycle phase, List<String> missing) {
 		log.debug(
-				"Missing required attributes handler={} name={} phase={} missing={}",
-				h.id(),
-				holder.getName(),
-				phase,
-				missing);
+			"Missing required attributes handler={} name={} phase={} missing={}",
+			h.id(),
+			holder.getName(),
+			phase,
+			missing);
 	}
 
 	// --- Compatibility shims for legacy callers (enqueue*) ---
