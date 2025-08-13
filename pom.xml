@@ -29,7 +29,64 @@
         <lombok.version>1.18.38</lombok.version>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
+
+        <spotless-maven-plugin.version>2.43.0</spotless-maven-plugin.version>
+        <spotless-palantir-maven-plugin.version>2.59.0</spotless-palantir-maven-plugin.version>
     </properties>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>${spotless-maven-plugin.version}</version>
+                <configuration>
+                    <java>
+                        <includes>
+                            <include>src/**/*.java</include>
+                        </includes>
+                        <cleanthat/>
+                        <palantirJavaFormat>
+                            <version>${spotless-palantir-maven-plugin.version}</version>
+                            <style>PALANTIR</style>
+                            <formatJavadoc>true</formatJavadoc>
+                        </palantirJavaFormat>
+                        <importOrder>
+                            <order>java|jakarta,lombok|org, ,|com.mastercard,\#com.mastercard,\#</order>
+                        </importOrder>
+                        <indent>
+                            <tabs>true</tabs>
+                            <spacesPerTab>4</spacesPerTab>
+                        </indent>
+                        <removeUnusedImports/>
+                        <formatAnnotations/>
+                        <trimTrailingWhitespace/>
+                        <replaceRegex>
+                            <name>Remove wildcard imports</name>
+                            <searchRegex>import\s+[^\*\s]+\*;(\r\n|\r|\n)</searchRegex>
+                            <replacement>$1</replacement>
+                        </replaceRegex>
+                    </java>
+                    <json>
+                        <includes>
+                            <include>src/**/*.json</include>
+                        </includes>
+                        <simple>
+                            <indentSpaces>2</indentSpaces>
+                        </simple>
+                    </json>
+                    <yaml>
+                        <includes>
+                            <include>src/**/*.yaml</include>
+                        </includes>
+                        <excludes>
+                        </excludes>
+                        <jackson/>
+                    </yaml>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 
     <!-- OTel BOM to manage versions -->
     <dependencyManagement>
@@ -135,6 +192,6 @@
     </dependencies>
 
     <profiles>
-
     </profiles>
+
 </project>
