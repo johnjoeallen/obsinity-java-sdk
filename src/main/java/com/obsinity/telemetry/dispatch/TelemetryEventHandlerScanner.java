@@ -21,6 +21,7 @@ import com.obsinity.telemetry.annotations.RequireAttrs;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
+import org.springframework.stereotype.Component;
 
 /**
  * Scans beans for @OnEvent methods, but only if the bean's user class is annotated with @TelemetryEventHandler.
@@ -32,6 +33,7 @@ import com.obsinity.telemetry.model.TelemetryHolder;
  *  - TelemetryHolder: inject the holder
  *  - List<?> (batch): only allowed for lifecycle=ROOT_FLOW_FINISHED (handled by BatchBinder)
  */
+@Component
 public final class TelemetryEventHandlerScanner {
 
 	public List<Handler> scan(Object bean) {
