@@ -122,11 +122,6 @@ public class TelemetryDispatchBus implements com.obsinity.telemetry.processor.Te
 					h.id(), t.toString());
 			}
 		}
-
-		// Optional: also fan out individual FLOW_FINISHED events for non-batch handlers
-		for (TelemetryHolder h : batch) {
-			dispatch(Lifecycle.FLOW_FINISHED, h);
-		}
 	}
 
 	/* ================= Helpers ================= */
