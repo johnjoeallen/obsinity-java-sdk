@@ -1,41 +1,42 @@
 package com.obsinity.telemetry.aspect;
 
-import com.obsinity.telemetry.annotations.Flow;
-import com.obsinity.telemetry.annotations.Step;
-import com.obsinity.telemetry.processor.TelemetryProcessor;
 import lombok.RequiredArgsConstructor;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.springframework.stereotype.Component;
 
+import com.obsinity.telemetry.annotations.Flow;
+import com.obsinity.telemetry.annotations.Step;
+import com.obsinity.telemetry.processor.TelemetryProcessor;
+
 /**
  * # TelemetryAspect
- * <p>
- * Spring AOP aspect that intercepts methods annotated with {@link Flow} and {@link Step}
- * and delegates to {@link TelemetryProcessor} to record application-specific telemetry
- * for Obsinity.
  *
- * <p>Responsibilities:</p>
+ * <p>Spring AOP aspect that intercepts methods annotated with {@link Flow} and {@link Step} and delegates to
+ * {@link TelemetryProcessor} to record application-specific telemetry for Obsinity.
+ *
+ * <p>Responsibilities:
+ *
  * <ul>
- *   <li>Match and wrap calls to methods annotated with {@code @Flow} or {@code @Step}.</li>
- *   <li>Build a {@link FlowOptions} from the current {@link ProceedingJoinPoint} via
- *       {@link FlowOptionsFactory} (this inspects {@code @Flow}, {@code @Step},
- *       optional {@code @AutoFlow}, and {@code @Kind} if present).</li>
- *   <li>Delegate to {@link TelemetryProcessor#proceed(ProceedingJoinPoint, FlowOptions)}
- *       which creates/links spans (flows), manages per-thread context, and notifies receivers.</li>
+ *   <li>Match and wrap calls to methods annotated with {@code @Flow} or {@code @Step}.
+ *   <li>Build a {@link FlowOptions} from the current {@link ProceedingJoinPoint} via {@link FlowOptionsFactory} (this
+ *       inspects {@code @Flow}, {@code @Step}, optional {@code @AutoFlow}, and {@code @Kind} if present).
+ *   <li>Delegate to {@link TelemetryProcessor#proceed(ProceedingJoinPoint, FlowOptions)} which creates/links spans
+ *       (flows), manages per-thread context, and notifies receivers.
  * </ul>
  *
- * <p>Notes:</p>
+ * <p>Notes:
+ *
  * <ul>
- *   <li>This aspect is deliberately stateless and thread-safe; all state is managed inside
- *       {@link TelemetryProcessor} using thread-local context.</li>
- *   <li>Pointcuts use {@code execution(* *(..)) && @annotation(X)} so that any method
- *       (any name, any arguments) with the target annotation is matched and the annotation
- *       instance is bound into the advice method.</li>
+ *   <li>This aspect is deliberately stateless and thread-safe; all state is managed inside {@link TelemetryProcessor}
+ *       using thread-local context.
+ *   <li>Pointcuts use {@code execution(* *(..)) && @annotation(X)} so that any method (any name, any arguments) with
+ *       the target annotation is matched and the annotation instance is bound into the advice method.
  * </ul>
  *
  * <h2>Example</h2>
+ *
  * <pre>{@code
  * @Component
  * class OrderService {
@@ -63,25 +64,21 @@ import org.springframework.stereotype.Component;
 @Component
 public class TelemetryAspect {
 
-	/**
-	 * Strategy that performs all telemetry handling (creation, nesting, notifications).
-	 */
+	/** Strategy that performs all telemetry handling (creation, nesting, notifications). */
 	private final TelemetryProcessor telemetryProcessor;
 
 	/**
 	 * Around advice for methods annotated with {@link Flow}.
 	 *
-	 * <p>Pointcut explanation:
-	 * {@code execution(* *(..))} matches any method execution (any name/args/return),
-	 * and {@code @annotation(flow)} restricts matches to methods annotated with {@link Flow},
-	 * binding the concrete annotation instance to the {@code flow} parameter.</p>
+	 * <p>Pointcut explanation: {@code execution(* *(..))} matches any method execution (any name/args/return), and
+	 * {@code @annotation(flow)} restricts matches to methods annotated with {@link Flow}, binding the concrete
+	 * annotation instance to the {@code flow} parameter.
 	 *
-	 * <p>The advice constructs a {@link FlowOptions} from the join point (which determines
-	 * whether this is a root Flow or a promoted Step) and delegates to the
-	 * {@link TelemetryProcessor}.</p>
+	 * <p>The advice constructs a {@link FlowOptions} from the join point (which determines whether this is a root Flow
+	 * or a promoted Step) and delegates to the {@link TelemetryProcessor}.
 	 *
 	 * @param joinPoint the current method invocation context (target, args, signature)
-	 * @param flow      the {@link Flow} annotation present on the method being invoked
+	 * @param flow the {@link Flow} annotation present on the method being invoked
 	 * @return the original method's return value
 	 * @throws Throwable any exception thrown by the original method; rethrown unchanged
 	 */
@@ -94,18 +91,15 @@ public class TelemetryAspect {
 	/**
 	 * Around advice for methods annotated with {@link Step}.
 	 *
-	 * <p>Pointcut explanation:
-	 * {@code execution(* *(..))} matches any method execution; {@code @annotation(step)}
-	 * limits matches to methods annotated with {@link Step}, binding the annotation
-	 * instance to {@code step}.</p>
+	 * <p>Pointcut explanation: {@code execution(* *(..))} matches any method execution; {@code @annotation(step)}
+	 * limits matches to methods annotated with {@link Step}, binding the annotation instance to {@code step}.
 	 *
-	 * <p>The advice builds a {@link FlowOptions} from the join point and delegates to
-	 * {@link TelemetryProcessor}. If no Flow is active when this Step is invoked,
-	 * the processor may promote the Step to a Flow depending on configuration
-	 * (e.g., presence/absence of {@code @AutoFlow}).</p>
+	 * <p>The advice builds a {@link FlowOptions} from the join point and delegates to {@link TelemetryProcessor}. If no
+	 * Flow is active when this Step is invoked, the processor may promote the Step to a Flow depending on configuration
+	 * (e.g., presence/absence of {@code @AutoFlow}).
 	 *
 	 * @param joinPoint the current method invocation context (target, args, signature)
-	 * @param step      the {@link Step} annotation present on the method being invoked
+	 * @param step the {@link Step} annotation present on the method being invoked
 	 * @return the original method's return value
 	 * @throws Throwable any exception thrown by the original method; rethrown unchanged
 	 */

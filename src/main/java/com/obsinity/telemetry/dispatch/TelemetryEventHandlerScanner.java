@@ -1,25 +1,26 @@
 package com.obsinity.telemetry.dispatch;
 
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.BitSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
+
+import io.opentelemetry.api.trace.SpanKind;
 import com.obsinity.telemetry.annotations.AllAttrs;
 import com.obsinity.telemetry.annotations.Attr;
-import com.obsinity.telemetry.annotations.Batch;
 import com.obsinity.telemetry.annotations.Err;
 import com.obsinity.telemetry.annotations.OnEvent;
 import com.obsinity.telemetry.annotations.RequireAttrs;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
-import com.obsinity.telemetry.dispatch.Handler;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
-import io.opentelemetry.api.trace.SpanKind;
 
-import java.lang.reflect.Method;
-import java.util.*;
-import java.util.regex.Pattern;
-
-/**
- * Scans beans for @OnEvent methods, but only if the bean's
- * user class is annotated with @TelemetryEventHandler.
- */
+/** Scans beans for @OnEvent methods, but only if the bean's user class is annotated with @TelemetryEventHandler. */
 public final class TelemetryEventHandlerScanner {
 
 	public List<Handler> scan(Object bean) {
@@ -41,7 +42,7 @@ public final class TelemetryEventHandlerScanner {
 			Pattern namePat = on.nameRegex().isBlank() ? null : Pattern.compile(on.nameRegex());
 
 			BitSet lifecycleMask = bitset(on.lifecycle(), Lifecycle.values().length, lc -> lc.ordinal());
-			BitSet kindMask      = bitset(on.kinds(),     SpanKind.values().length,  k -> k.ordinal());
+			BitSet kindMask = bitset(on.kinds(), SpanKind.values().length, k -> k.ordinal());
 
 			Pattern msgPat = on.messageRegex().isBlank() ? null : Pattern.compile(on.messageRegex());
 
@@ -51,8 +52,7 @@ public final class TelemetryEventHandlerScanner {
 					causeType = Class.forName(on.causeType(), false, userClass.getClassLoader());
 				} catch (ClassNotFoundException e) {
 					throw new IllegalArgumentException(
-						"@OnEvent causeType not found: " + on.causeType() + " on " + signature(userClass, m)
-					);
+							"@OnEvent causeType not found: " + on.causeType() + " on " + signature(userClass, m));
 				}
 			}
 
@@ -68,7 +68,6 @@ public final class TelemetryEventHandlerScanner {
 				Attr a = p.getAnnotation(Attr.class);
 				Err err = p.getAnnotation(Err.class);
 				AllAttrs all = p.getAnnotation(AllAttrs.class);
-				Batch batch = p.getAnnotation(Batch.class);
 
 				if (a != null) {
 					requiredAttrs.add(a.value());
@@ -79,23 +78,19 @@ public final class TelemetryEventHandlerScanner {
 				} else if (all != null) {
 					if (!Map.class.isAssignableFrom(p.getType())) {
 						throw new IllegalArgumentException(
-							"@AllAttrs parameter must be a Map: " + signature(userClass, m)
-						);
+								"@AllAttrs parameter must be a Map: " + signature(userClass, m));
 					}
 					binders.add(new AllAttrsBinder());
-				} else if (batch != null) {
-					if (!List.class.isAssignableFrom(p.getType())) {
-						throw new IllegalArgumentException(
-							"@Batch parameter must be List<TelemetryHolder>: " + signature(userClass, m)
-						);
-					}
-					binders.add(new BatchBinder(p.getType())); // dispatcher binds with the batch list
+				} else if (List.class.isAssignableFrom(p.getType())) {
+					// Inferred batch parameter — only allowed for ROOT_FLOW_FINISHED
+					validateListParamAllowed(on, userClass, m);
+					// Reuse your existing binder that expects the dispatcher to supply List<TelemetryHolder>
+					binders.add(new BatchBinder(p.getType()));
 				} else if (TelemetryHolder.class.isAssignableFrom(p.getType())) {
 					binders.add(new HolderBinder());
 				} else {
 					throw new IllegalArgumentException(
-						"Unsupported parameter binding on " + signature(userClass, m) + " for parameter: " + p
-					);
+							"Unsupported parameter binding on " + signature(userClass, m) + " for parameter: " + p);
 				}
 			}
 
@@ -103,10 +98,20 @@ public final class TelemetryEventHandlerScanner {
 			String id = userClass.getSimpleName() + "#" + m.getName();
 
 			out.add(new Handler(
-				bean, m, exact, namePat, lifecycleMask, kindMask,
-				on.requireThrowable(), types, on.includeSubclasses(),
-				msgPat, causeType, List.copyOf(binders), Set.copyOf(requiredAttrs), id
-			));
+					bean,
+					m,
+					exact,
+					namePat,
+					lifecycleMask,
+					kindMask,
+					on.requireThrowable(),
+					types,
+					on.includeSubclasses(),
+					msgPat,
+					causeType,
+					List.copyOf(binders),
+					Set.copyOf(requiredAttrs),
+					id));
 		}
 		return out;
 	}
@@ -116,23 +121,27 @@ public final class TelemetryEventHandlerScanner {
 		Class<?> c = bean.getClass();
 		try {
 			Class<?> aopUtils = Class.forName("org.springframework.aop.support.AopUtils");
-			boolean isAopProxy = (boolean) aopUtils.getMethod("isAopProxy", Object.class).invoke(null, bean);
+			boolean isAopProxy =
+					(boolean) aopUtils.getMethod("isAopProxy", Object.class).invoke(null, bean);
 			if (isAopProxy) {
-				Class<?> target = (Class<?>) aopUtils.getMethod("getTargetClass", Object.class).invoke(null, bean);
+				Class<?> target = (Class<?>)
+						aopUtils.getMethod("getTargetClass", Object.class).invoke(null, bean);
 				if (target != null) return target;
 			}
 			Class<?> classUtils = Class.forName("org.springframework.util.ClassUtils");
-			Class<?> user = (Class<?>) classUtils.getMethod("getUserClass", Class.class).invoke(null, c);
+			Class<?> user =
+					(Class<?>) classUtils.getMethod("getUserClass", Class.class).invoke(null, c);
 			if (user != null) return user;
 		} catch (Throwable ignore) {
 			// Not using Spring or reflection failed — fall back
 		}
 		String n = c.getName();
-		int jdkProxyIdx = n.indexOf("$$");
+		int jdkProxyIdx = n.indexOf('$');
 		if (jdkProxyIdx > 0) {
 			try {
 				return Class.forName(n.substring(0, jdkProxyIdx));
-			} catch (ClassNotFoundException ignored) { }
+			} catch (ClassNotFoundException ignored) {
+			}
 		}
 		return c;
 	}
@@ -142,8 +151,19 @@ public final class TelemetryEventHandlerScanner {
 		boolean hasRegex = !on.nameRegex().isBlank();
 		if (hasExact && hasRegex) {
 			throw new IllegalArgumentException(
-				"@OnEvent cannot set both name and nameRegex on " + signature(m.getDeclaringClass(), m)
-			);
+					"@OnEvent cannot set both name and nameRegex on " + signature(m.getDeclaringClass(), m));
+		}
+	}
+
+	private static void validateListParamAllowed(OnEvent on, Class<?> userClass, Method m) {
+		// List parameter is only valid when lifecycle is exactly ROOT_FLOW_FINISHED (i.e., batch of completed flows)
+		var lifecycles = Arrays.asList(on.lifecycle());
+		boolean onlyRootFinished =
+				!lifecycles.isEmpty() && lifecycles.stream().allMatch(lc -> lc == Lifecycle.ROOT_FLOW_FINISHED);
+		if (!onlyRootFinished) {
+			throw new IllegalArgumentException(
+					"List<TelemetryHolder> parameters are only allowed for lifecycle=ROOT_FLOW_FINISHED on "
+							+ signature(userClass, m));
 		}
 	}
 

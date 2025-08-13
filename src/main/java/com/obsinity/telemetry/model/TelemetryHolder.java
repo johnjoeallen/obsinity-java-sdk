@@ -1,5 +1,15 @@
 package com.obsinity.telemetry.model;
 
+import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
+
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
@@ -16,32 +26,24 @@ import io.opentelemetry.sdk.trace.data.EventData;
 import io.opentelemetry.sdk.trace.data.LinkData;
 import io.opentelemetry.sdk.trace.data.StatusData;
 
-import java.time.Instant;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
-
 /**
  * OTEL-shaped telemetry container with Obsinity-native fields.
  *
- * <p><strong>Service ID requirement:</strong> You MUST provide a service identifier either at the
- * top level {@link #serviceId} or in {@code resource.attributes["service.id"]}. If both exist they must match.
- * Use {@link #effectiveServiceId()} to read the resolved value.</p>
+ * <p><strong>Service ID requirement:</strong> You MUST provide a service identifier either at the top level
+ * {@link #serviceId} or in {@code resource.attributes["service.id"]}. If both exist they must match. Use
+ * {@link #effectiveServiceId()} to read the resolved value.
  *
  * <p>Wrapped (non-enum) OTEL concepts exposed via Obsinity wrappers:
+ *
  * <ul>
- *   <li>{@link OResource} (wraps {@link Resource})</li>
- *   <li>{@link OAttributes} (wraps {@link Attributes})</li>
- *   <li>{@link OEvent} (wraps {@link EventData} + adds {@code endEpochNanos} and monotonic start)</li>
- *   <li>{@link OLink} (wraps {@link LinkData})</li>
- *   <li>{@link OStatus} (wraps {@link StatusData})</li>
+ *   <li>{@link OResource} (wraps {@link Resource})
+ *   <li>{@link OAttributes} (wraps {@link Attributes})
+ *   <li>{@link OEvent} (wraps {@link EventData} + adds {@code endEpochNanos} and monotonic start)
+ *   <li>{@link OLink} (wraps {@link LinkData})
+ *   <li>{@link OStatus} (wraps {@link StatusData})
  * </ul>
- * Enums like {@link SpanKind} and {@link StatusCode} are used directly from OTEL.</p>
+ *
+ * Enums like {@link SpanKind} and {@link StatusCode} are used directly from OTEL.
  */
 @JsonInclude(Include.NON_NULL)
 public class TelemetryHolder {
@@ -56,48 +58,45 @@ public class TelemetryHolder {
 	private String traceId;
 	private String spanId;
 	private String parentSpanId;
-	private SpanKind kind;                 // OTEL enum
-	private OResource resource;            // wrapper
-	private OAttributes attributes;        // wrapper
-	private List<OEvent> events;           // mutable
-	private List<OLink> links;             // mutable
-	private OStatus status;                // wrapper
+	private SpanKind kind; // OTEL enum
+	private OResource resource; // wrapper
+	private OAttributes attributes; // wrapper
+	private List<OEvent> events; // mutable
+	private List<OLink> links; // mutable
+	private OStatus status; // wrapper
 
 	/* ── Obsinity-native ─────────────────────────────────────────── */
-	private String serviceId;              // required here OR in resource["service.id"]
+	private String serviceId; // required here OR in resource["service.id"]
 	private String correlationId;
-	private Map<String, Object> extensions;    // mutable free-form
+	private Map<String, Object> extensions; // mutable free-form
 	private Boolean synthetic;
 
 	/* ── Error/exception context (non-serialized) ────────────────── */
 	@JsonIgnore
-	private transient Throwable throwable;   // NEW: optional throwable associated with this holder
+	private transient Throwable throwable; // NEW: optional throwable associated with this holder
 
 	/* ── Event context cursor (for nested steps) ──────────────────── */
 	private final Deque<OEvent> eventStack = new ArrayDeque<>();
 
-	/**
-	 * Full constructor (validates service id consistency).
-	 */
+	/** Full constructor (validates service id consistency). */
 	public TelemetryHolder(
-		String name,
-		Instant timestamp,
-		Long timeUnixNano,
-		Instant endTimestamp,
-		String traceId,
-		String spanId,
-		String parentSpanId,
-		SpanKind kind,
-		OResource resource,
-		OAttributes attributes,
-		List<OEvent> events,
-		List<OLink> links,
-		OStatus status,
-		String serviceId,
-		String correlationId,
-		Map<String, Object> extensions,
-		Boolean synthetic
-	) {
+			String name,
+			Instant timestamp,
+			Long timeUnixNano,
+			Instant endTimestamp,
+			String traceId,
+			String spanId,
+			String parentSpanId,
+			SpanKind kind,
+			OResource resource,
+			OAttributes attributes,
+			List<OEvent> events,
+			List<OLink> links,
+			OStatus status,
+			String serviceId,
+			String correlationId,
+			Map<String, Object> extensions,
+			Boolean synthetic) {
 		this.name = name;
 		this.timestamp = timestamp;
 		this.timeUnixNano = timeUnixNano;
@@ -120,27 +119,82 @@ public class TelemetryHolder {
 	}
 
 	/* ========================= Accessors (record-like) ========================= */
-	public String name() { return name; }
-	public Instant timestamp() { return timestamp; }
-	public Long timeUnixNano() { return timeUnixNano; }
-	public Instant endTimestamp() { return endTimestamp; }
-	public String traceId() { return traceId; }
-	public String spanId() { return spanId; }
-	public String parentSpanId() { return parentSpanId; }
-	public SpanKind kind() { return kind; }
-	public OResource resource() { return resource; }
-	public OAttributes attributes() { return attributes; }
-	public List<OEvent> events() { return events; }           // MUTABLE
-	public List<OLink> links() { return links; }              // MUTABLE
-	public OStatus status() { return status; }
-	public String serviceId() { return serviceId; }
-	public String correlationId() { return correlationId; }
-	public Map<String, Object> extensions() { return extensions; } // MUTABLE
-	public Boolean synthetic() { return synthetic; }
+	public String name() {
+		return name;
+	}
+
+	public Instant timestamp() {
+		return timestamp;
+	}
+
+	public Long timeUnixNano() {
+		return timeUnixNano;
+	}
+
+	public Instant endTimestamp() {
+		return endTimestamp;
+	}
+
+	public String traceId() {
+		return traceId;
+	}
+
+	public String spanId() {
+		return spanId;
+	}
+
+	public String parentSpanId() {
+		return parentSpanId;
+	}
+
+	public SpanKind kind() {
+		return kind;
+	}
+
+	public OResource resource() {
+		return resource;
+	}
+
+	public OAttributes attributes() {
+		return attributes;
+	}
+
+	public List<OEvent> events() {
+		return events;
+	} // MUTABLE
+
+	public List<OLink> links() {
+		return links;
+	} // MUTABLE
+
+	public OStatus status() {
+		return status;
+	}
+
+	public String serviceId() {
+		return serviceId;
+	}
+
+	public String correlationId() {
+		return correlationId;
+	}
+
+	public Map<String, Object> extensions() {
+		return extensions;
+	} // MUTABLE
+
+	public Boolean synthetic() {
+		return synthetic;
+	}
 
 	/* ===== Compatibility getters for dispatcher/binders (conventional style) ==== */
-	public String getName() { return name; }                 // convenience
-	public SpanKind getSpanKind() { return kind; }           // convenience
+	public String getName() {
+		return name;
+	} // convenience
+
+	public SpanKind getSpanKind() {
+		return kind;
+	} // convenience
 
 	/* Minimal mutators we actually use from the processor */
 	public void setEndTimestamp(Instant endTimestamp) {
@@ -149,16 +203,24 @@ public class TelemetryHolder {
 
 	/* ========================= Throwable helpers ========================= */
 	/** Returns the associated throwable (may be null). */
-	public Throwable throwable() { return throwable; }
+	public Throwable throwable() {
+		return throwable;
+	}
 
 	/** Conventional accessor for frameworks. */
-	public Throwable getThrowable() { return throwable; }
+	public Throwable getThrowable() {
+		return throwable;
+	}
 
 	/** Sets/overwrites the associated throwable. */
-	public void setThrowable(Throwable throwable) { this.throwable = throwable; }
+	public void setThrowable(Throwable throwable) {
+		this.throwable = throwable;
+	}
 
 	/** @return true if a throwable is present. */
-	public boolean hasThrowable() { return throwable != null; }
+	public boolean hasThrowable() {
+		return throwable != null;
+	}
 
 	/* ========================= Attribute convenience ========================= */
 
@@ -168,8 +230,8 @@ public class TelemetryHolder {
 	}
 
 	/**
-	 * Returns the attribute value coerced to String, or null if not present.
-	 * For numbers/booleans, uses {@code toString()}. For other objects, also {@code toString()}.
+	 * Returns the attribute value coerced to String, or null if not present. For numbers/booleans, uses
+	 * {@code toString()}. For other objects, also {@code toString()}.
 	 */
 	public String attr(String key) {
 		if (!hasAttr(key)) return null;
@@ -185,7 +247,11 @@ public class TelemetryHolder {
 		Object v = attributes.asMap().get(key);
 		if (v instanceof Number n) return n.longValue();
 		if (v instanceof String s) {
-			try { return Long.parseLong(s); } catch (NumberFormatException e) { return null; }
+			try {
+				return Long.parseLong(s);
+			} catch (NumberFormatException e) {
+				return null;
+			}
 		}
 		return null;
 	}
@@ -196,7 +262,11 @@ public class TelemetryHolder {
 		Object v = attributes.asMap().get(key);
 		if (v instanceof Number n) return n.intValue();
 		if (v instanceof String s) {
-			try { return Integer.parseInt(s); } catch (NumberFormatException e) { return null; }
+			try {
+				return Integer.parseInt(s);
+			} catch (NumberFormatException e) {
+				return null;
+			}
 		}
 		return null;
 	}
@@ -207,7 +277,11 @@ public class TelemetryHolder {
 		Object v = attributes.asMap().get(key);
 		if (v instanceof Number n) return n.doubleValue();
 		if (v instanceof String s) {
-			try { return Double.parseDouble(s); } catch (NumberFormatException e) { return null; }
+			try {
+				return Double.parseDouble(s);
+			} catch (NumberFormatException e) {
+				return null;
+			}
 		}
 		return null;
 	}
@@ -227,8 +301,8 @@ public class TelemetryHolder {
 	}
 
 	/**
-	 * Returns a String→String view of attributes (values coerced via {@code toString()}).
-	 * The returned map is a shallow copy and safe to expose.
+	 * Returns a String→String view of attributes (values coerced via {@code toString()}). The returned map is a shallow
+	 * copy and safe to expose.
 	 */
 	public Map<String, String> stringAttributes() {
 		Map<String, Object> src = (attributes != null ? attributes.asMap() : Map.of());
@@ -242,10 +316,7 @@ public class TelemetryHolder {
 
 	/* ========================= Behavior ========================= */
 
-	/**
-	 * Application-facing: write to the current context
-	 * (top event if present, else flow attributes).
-	 */
+	/** Application-facing: write to the current context (top event if present, else flow attributes). */
 	public void contextPut(final String key, final Object value) {
 		if (key == null || key.isBlank()) {
 			return;
@@ -259,22 +330,18 @@ public class TelemetryHolder {
 	}
 
 	/**
-	 * Processor-facing: step entry — append an event and push it on the stack so
-	 * app code can {@link #contextPut(String, Object)} into it immediately.
+	 * Processor-facing: step entry — append an event and push it on the stack so app code can
+	 * {@link #contextPut(String, Object)} into it immediately.
 	 *
-	 * @param name          event name
-	 * @param epochNanos    wall-clock start time (for OTEL/export)
+	 * @param name event name
+	 * @param epochNanos wall-clock start time (for OTEL/export)
 	 * @param startNanoTime monotonic start time (for accurate duration; not serialized)
-	 * @param initialAttrs  base attributes to seed the event with (nullable)
+	 * @param initialAttrs base attributes to seed the event with (nullable)
 	 * @return the newly created event (already appended)
 	 */
-	public OEvent beginStepEvent(final String name,
-								 final long epochNanos,
-								 final long startNanoTime,
-								 final OAttributes initialAttrs) {
-		final OAttributes attrs = (initialAttrs != null)
-			? initialAttrs
-			: new OAttributes(new LinkedHashMap<>());
+	public OEvent beginStepEvent(
+			final String name, final long epochNanos, final long startNanoTime, final OAttributes initialAttrs) {
+		final OAttributes attrs = (initialAttrs != null) ? initialAttrs : new OAttributes(new LinkedHashMap<>());
 		final OEvent ev = new OEvent(name, epochNanos, 0L, attrs, 0, startNanoTime);
 		events().add(ev);
 		eventStack.addLast(ev);
@@ -282,13 +349,10 @@ public class TelemetryHolder {
 	}
 
 	/**
-	 * Processor-facing: step exit — finalize the current event.
-	 * Sets phase=finish, merges updates, sets duration from monotonic nanos,
-	 * and replaces the last list element with a copy carrying endEpochNanos.
+	 * Processor-facing: step exit — finalize the current event. Sets phase=finish, merges updates, sets duration from
+	 * monotonic nanos, and replaces the last list element with a copy carrying endEpochNanos.
 	 */
-	public void endStepEvent(final long endEpochNanos,
-							 final long endNanoTime,
-							 final Map<String, Object> updates) {
+	public void endStepEvent(final long endEpochNanos, final long endNanoTime, final Map<String, Object> updates) {
 		final OEvent ev = eventStack.pollLast();
 		if (ev == null) {
 			// Intentionally empty: no active event to end
@@ -310,22 +374,21 @@ public class TelemetryHolder {
 		final List<OEvent> list = events();
 		final int lastIdx = list.isEmpty() ? -1 : list.size() - 1;
 		if (lastIdx >= 0 && list.get(lastIdx) == ev) {
-			list.set(lastIdx, new OEvent(
-				ev.name(),
-				ev.epochNanos(),
-				endEpochNanos,
-				attrs,
-				ev.droppedAttributesCount(),
-				ev.getStartNanoTime()
-			));
+			list.set(
+					lastIdx,
+					new OEvent(
+							ev.name(),
+							ev.epochNanos(),
+							endEpochNanos,
+							attrs,
+							ev.droppedAttributesCount(),
+							ev.getStartNanoTime()));
 		} else {
 			// Intentionally empty: unexpected ordering (should not happen)
 		}
 	}
 
-	/**
-	 * Resolve service id with top-level preference, fallback to resource["service.id"].
-	 */
+	/** Resolve service id with top-level preference, fallback to resource["service.id"]. */
 	public String effectiveServiceId() {
 		if (serviceId != null && !serviceId.isBlank()) return serviceId;
 		if (resource == null || resource.attributes() == null) return null;
@@ -333,9 +396,7 @@ public class TelemetryHolder {
 		return v == null ? null : v.toString();
 	}
 
-	/**
-	 * Validate presence/equality of service id (top-level vs resource).
-	 */
+	/** Validate presence/equality of service id (top-level vs resource). */
 	private void validateServiceIdConsistency() {
 		String top = (serviceId == null || serviceId.isBlank()) ? null : serviceId;
 		String fromRes = null;
@@ -345,19 +406,17 @@ public class TelemetryHolder {
 		}
 		if (top == null && fromRes == null) {
 			throw new IllegalArgumentException(
-				"Missing service identifier: set top-level 'serviceId' or resource.attributes[\"service.id\"]");
+					"Missing service identifier: set top-level 'serviceId' or resource.attributes[\"service.id\"]");
 		}
 		if (top != null && fromRes != null && !top.equals(fromRes)) {
 			throw new IllegalArgumentException(
-				"Conflicting service identifiers: top-level 'serviceId' != resource.attributes[\"service.id\"]");
+					"Conflicting service identifiers: top-level 'serviceId' != resource.attributes[\"service.id\"]");
 		}
 	}
 
 	/* ========================= Wrappers ========================= */
 
-	/**
-	 * Wrapper around OTEL {@link Resource}.
-	 */
+	/** Wrapper around OTEL {@link Resource}. */
 	@JsonInclude(Include.NON_NULL)
 	public static final class OResource {
 		private final OAttributes attributes;
@@ -366,7 +425,9 @@ public class TelemetryHolder {
 			this.attributes = attributes;
 		}
 
-		public OAttributes attributes() { return attributes; }
+		public OAttributes attributes() {
+			return attributes;
+		}
 
 		/* Converters */
 		public Resource toOtel() {
@@ -378,9 +439,7 @@ public class TelemetryHolder {
 		}
 	}
 
-	/**
-	 * Wrapper around OTEL {@link Attributes} with a mutable String→Object view for JSON.
-	 */
+	/** Wrapper around OTEL {@link Attributes} with a mutable String→Object view for JSON. */
 	@JsonInclude(Include.NON_NULL)
 	public static final class OAttributes {
 		private final Map<String, Object> asMap;
@@ -389,11 +448,11 @@ public class TelemetryHolder {
 			this.asMap = (asMap != null ? asMap : new LinkedHashMap<>());
 		}
 
-		public Map<String, Object> asMap() { return asMap; }
+		public Map<String, Object> asMap() {
+			return asMap;
+		}
 
-		/**
-		 * Put a key/value (null keys are ignored).
-		 */
+		/** Put a key/value (null keys are ignored). */
 		public void put(String key, Object value) {
 			if (key != null) {
 				asMap.put(key, value);
@@ -410,11 +469,8 @@ public class TelemetryHolder {
 		public static OAttributes fromOtel(Attributes attrs) {
 			if (attrs == null) return new OAttributes(new LinkedHashMap<>());
 			Map<String, Object> m = attrs.asMap().entrySet().stream()
-				.collect(Collectors.toMap(
-					e -> e.getKey().getKey(),
-					Map.Entry::getValue,
-					(a, b) -> a,
-					LinkedHashMap::new));
+					.collect(Collectors.toMap(
+							e -> e.getKey().getKey(), Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new));
 			return new OAttributes(m);
 		}
 
@@ -427,7 +483,8 @@ public class TelemetryHolder {
 			else if (v instanceof Float f) b.put(AttributeKey.doubleKey(k), f.doubleValue());
 			else if (v instanceof Double d) b.put(AttributeKey.doubleKey(k), d);
 			else if (v instanceof List<?> list && list.stream().allMatch(x -> x instanceof String)) {
-				@SuppressWarnings("unchecked") List<String> ss = (List<String>) list;
+				@SuppressWarnings("unchecked")
+				List<String> ss = (List<String>) list;
 				b.put(AttributeKey.stringArrayKey(k), ss);
 			} else {
 				b.put(AttributeKey.stringKey(k), v.toString()); // last resort
@@ -436,28 +493,28 @@ public class TelemetryHolder {
 	}
 
 	/**
-	 * Wrapper around OTEL {@link EventData}, with extra fields:
-	 * - {@code endEpochNanos} (absolute end time for exporters)
-	 * - {@code startNanoTime} (transient, monotonic for accurate duration)
-	 * Use {@link #toOtel()} when you need an OTEL-compatible view.
+	 * Wrapper around OTEL {@link EventData}, with extra fields: - {@code endEpochNanos} (absolute end time for
+	 * exporters) - {@code startNanoTime} (transient, monotonic for accurate duration) Use {@link #toOtel()} when you
+	 * need an OTEL-compatible view.
 	 */
 	@JsonInclude(Include.NON_NULL)
 	public static final class OEvent {
 		private final String name;
-		private final long epochNanos;                 // start (wall clock)
-		private final Long endEpochNanos;              // end (wall clock)
+		private final long epochNanos; // start (wall clock)
+		private final Long endEpochNanos; // end (wall clock)
 		private final OAttributes attributes;
-		private final Integer droppedAttributesCount;  // optional, contributes to total count
+		private final Integer droppedAttributesCount; // optional, contributes to total count
 
 		// NEW: monotonic start for accurate duration; not serialized
 		private final transient long startNanoTime;
 
-		public OEvent(String name,
-					  long epochNanos,
-					  Long endEpochNanos,
-					  OAttributes attributes,
-					  Integer droppedAttributesCount,
-					  long startNanoTime) {
+		public OEvent(
+				String name,
+				long epochNanos,
+				Long endEpochNanos,
+				OAttributes attributes,
+				Integer droppedAttributesCount,
+				long startNanoTime) {
 			this.name = Objects.requireNonNull(name, "name");
 			this.epochNanos = epochNanos;
 			this.endEpochNanos = endEpochNanos;
@@ -466,35 +523,60 @@ public class TelemetryHolder {
 			this.startNanoTime = startNanoTime;
 		}
 
-		public String name() { return name; }
-		public long epochNanos() { return epochNanos; }
-		public Long endEpochNanos() { return endEpochNanos; }
-		public OAttributes attributes() { return attributes; }
-		public Integer droppedAttributesCount() { return droppedAttributesCount; }
-		public long getStartNanoTime() { return startNanoTime; }
+		public String name() {
+			return name;
+		}
 
-		/**
-		 * OTEL view (no end time in the interface; exporter can still use {@link #endEpochNanos()}).
-		 */
+		public long epochNanos() {
+			return epochNanos;
+		}
+
+		public Long endEpochNanos() {
+			return endEpochNanos;
+		}
+
+		public OAttributes attributes() {
+			return attributes;
+		}
+
+		public Integer droppedAttributesCount() {
+			return droppedAttributesCount;
+		}
+
+		public long getStartNanoTime() {
+			return startNanoTime;
+		}
+
+		/** OTEL view (no end time in the interface; exporter can still use {@link #endEpochNanos()}). */
 		public EventData toOtel() {
 			final Attributes otelAttrs = attributes.toOtel();
-			final int total = (droppedAttributesCount == null ? otelAttrs.size() : otelAttrs.size() + droppedAttributesCount);
+			final int total =
+					(droppedAttributesCount == null ? otelAttrs.size() : otelAttrs.size() + droppedAttributesCount);
 			return new EventData() {
 				@Override
-				public long getEpochNanos() { return epochNanos; }
+				public long getEpochNanos() {
+					return epochNanos;
+				}
+
 				@Override
-				public String getName() { return name; }
+				public String getName() {
+					return name;
+				}
+
 				@Override
-				public Attributes getAttributes() { return otelAttrs; }
+				public Attributes getAttributes() {
+					return otelAttrs;
+				}
+
 				@Override
-				public int getTotalAttributeCount() { return total; }
+				public int getTotalAttributeCount() {
+					return total;
+				}
 			};
 		}
 	}
 
-	/**
-	 * Wrapper around OTEL {@link LinkData}.
-	 */
+	/** Wrapper around OTEL {@link LinkData}. */
 	@JsonInclude(Include.NON_NULL)
 	public static final class OLink {
 		private final String traceId;
@@ -507,9 +589,17 @@ public class TelemetryHolder {
 			this.attributes = attributes == null ? new OAttributes(new LinkedHashMap<>()) : attributes;
 		}
 
-		public String traceId() { return traceId; }
-		public String spanId() { return spanId; }
-		public OAttributes attributes() { return attributes; }
+		public String traceId() {
+			return traceId;
+		}
+
+		public String spanId() {
+			return spanId;
+		}
+
+		public OAttributes attributes() {
+			return attributes;
+		}
 
 		public LinkData toOtel() {
 			SpanContext ctx = SpanContext.create(traceId, spanId, TraceFlags.getSampled(), TraceState.getDefault());
@@ -518,13 +608,14 @@ public class TelemetryHolder {
 
 		public static OLink fromOtel(LinkData ld) {
 			if (ld == null) return null;
-			return new OLink(ld.getSpanContext().getTraceId(), ld.getSpanContext().getSpanId(), OAttributes.fromOtel(ld.getAttributes()));
+			return new OLink(
+					ld.getSpanContext().getTraceId(),
+					ld.getSpanContext().getSpanId(),
+					OAttributes.fromOtel(ld.getAttributes()));
 		}
 	}
 
-	/**
-	 * Wrapper around OTEL {@link StatusData}. Uses OTEL {@link StatusCode} enum directly.
-	 */
+	/** Wrapper around OTEL {@link StatusData}. Uses OTEL {@link StatusCode} enum directly. */
 	@JsonInclude(Include.NON_NULL)
 	public static final class OStatus {
 		private final StatusCode code;
@@ -535,8 +626,13 @@ public class TelemetryHolder {
 			this.message = message;
 		}
 
-		public StatusCode code() { return code; }
-		public String message() { return message; }
+		public StatusCode code() {
+			return code;
+		}
+
+		public String message() {
+			return message;
+		}
 
 		public StatusData toOtel() {
 			return StatusData.create(code, message);

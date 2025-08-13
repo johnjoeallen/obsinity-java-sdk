@@ -1,16 +1,16 @@
 package com.obsinity.telemetry.annotations;
 
-import io.opentelemetry.api.trace.SpanKind;
-
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
+import io.opentelemetry.api.trace.SpanKind;
+
 /**
- * Declares the OpenTelemetry {@link SpanKind} for a class or method.
- * Precedence: method-level @Kind overrides class-level @Kind.
+ * Declares the OpenTelemetry {@link SpanKind} for a class or method. Precedence: method-level @Kind overrides
+ * class-level @Kind.
  */
 @Target({ElementType.TYPE, ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)

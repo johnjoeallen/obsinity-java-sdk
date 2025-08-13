@@ -21,5 +21,7 @@ public final class BatchBinder implements ParamBinder {
 		return batch;
 	}
 
-	public Class<?> paramType() { return paramType; }
+	public Class<?> paramType() {
+		return paramType;
+	}
 }

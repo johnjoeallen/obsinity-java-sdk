@@ -1,10 +1,9 @@
 package com.obsinity.telemetry.aspect;
 
-import com.obsinity.telemetry.annotations.AutoFlow;
-import com.obsinity.telemetry.annotations.Flow;
-import com.obsinity.telemetry.annotations.Kind;
-import com.obsinity.telemetry.annotations.Step;
-import io.opentelemetry.api.trace.SpanKind;
+import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.List;
+
 import org.apache.logging.log4j.spi.StandardLevel;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
@@ -12,18 +11,17 @@ import org.springframework.aop.support.AopUtils;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.util.ReflectionUtils;
 
-import java.lang.reflect.Method;
-import java.util.Arrays;
-import java.util.List;
+import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.annotations.AutoFlow;
+import com.obsinity.telemetry.annotations.Flow;
+import com.obsinity.telemetry.annotations.Kind;
+import com.obsinity.telemetry.annotations.Step;
 
 public final class FlowOptionsFactory {
 
-	private FlowOptionsFactory() {
-	}
+	private FlowOptionsFactory() {}
 
-	/**
-	 * Build FlowOptions from a reflective method (expects most-specific method).
-	 */
+	/** Build FlowOptions from a reflective method (expects most-specific method). */
 	public static FlowOptions fromMethod(Method method) {
 		Class<?> targetClass = method.getDeclaringClass();
 		SpanKind spanKind = resolveKind(method, targetClass);
@@ -44,30 +42,25 @@ public final class FlowOptionsFactory {
 		throw new IllegalArgumentException("Method lacks @Flow or @Step: " + method);
 	}
 
-	/**
-	 * Build FlowOptions by specifying the class + method name (no params).
-	 */
+	/** Build FlowOptions by specifying the class + method name (no params). */
 	public static FlowOptions fromClassAndMethod(Class<?> type, String methodName) {
 		Method m = pickAnnotatedOrSingleByName(type, methodName);
 		Method mostSpecific = AopUtils.getMostSpecificMethod(m, type);
 		return fromMethod(mostSpecific);
 	}
 
-	/**
-	 * Build FlowOptions by specifying the class + method name + parameter types.
-	 */
+	/** Build FlowOptions by specifying the class + method name + parameter types. */
 	public static FlowOptions fromClassAndMethod(Class<?> type, String methodName, Class<?>... paramTypes) {
 		Method m = ReflectionUtils.findMethod(type, methodName, paramTypes);
 		if (m == null) {
-			throw new IllegalArgumentException("No such method: " + type.getName() + "#" + methodName + Arrays.toString(paramTypes));
+			throw new IllegalArgumentException(
+					"No such method: " + type.getName() + "#" + methodName + Arrays.toString(paramTypes));
 		}
 		Method mostSpecific = AopUtils.getMostSpecificMethod(m, type);
 		return fromMethod(mostSpecific);
 	}
 
-	/**
-	 * Build FlowOptions from a ProceedingJoinPoint (resolves most-specific method).
-	 */
+	/** Build FlowOptions from a ProceedingJoinPoint (resolves most-specific method). */
 	public static FlowOptions fromJoinPoint(ProceedingJoinPoint pjp) {
 		MethodSignature sig = (MethodSignature) pjp.getSignature();
 		Method method = sig.getMethod();
@@ -80,7 +73,8 @@ public final class FlowOptionsFactory {
 
 	private static Method pickAnnotatedOrSingleByName(Class<?> type, String name) {
 		Method[] all = ReflectionUtils.getAllDeclaredMethods(type);
-		List<Method> sameName = Arrays.stream(all).filter(m -> m.getName().equals(name)).toList();
+		List<Method> sameName =
+				Arrays.stream(all).filter(m -> m.getName().equals(name)).toList();
 		if (sameName.isEmpty()) {
 			throw new IllegalArgumentException("No method named '" + name + "' on " + type.getName());
 		}
@@ -88,18 +82,16 @@ public final class FlowOptionsFactory {
 
 		// Prefer the one annotated with @Flow or @Step
 		List<Method> annotated = sameName.stream()
-			.filter(m -> AnnotatedElementUtils.hasAnnotation(m, Flow.class)
-				|| AnnotatedElementUtils.hasAnnotation(m, Step.class))
-			.toList();
+				.filter(m -> AnnotatedElementUtils.hasAnnotation(m, Flow.class)
+						|| AnnotatedElementUtils.hasAnnotation(m, Step.class))
+				.toList();
 		if (annotated.size() == 1) return annotated.get(0);
 
 		throw new IllegalStateException(
-			"Ambiguous overloads for " + type.getName() + "#" + name + " — specify parameter types");
+				"Ambiguous overloads for " + type.getName() + "#" + name + " — specify parameter types");
 	}
 
-	/**
-	 * Precedence: @Kind on method > @Kind on class > INTERNAL.
-	 */
+	/** Precedence: @Kind on method > @Kind on class > INTERNAL. */
 	private static SpanKind resolveKind(Method method, Class<?> targetClass) {
 		Kind methodKind = AnnotatedElementUtils.findMergedAnnotation(method, Kind.class);
 		if (methodKind != null) return methodKind.value();

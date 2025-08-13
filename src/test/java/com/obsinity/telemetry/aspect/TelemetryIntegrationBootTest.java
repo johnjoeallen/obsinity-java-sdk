@@ -1,27 +1,14 @@
 package com.obsinity.telemetry.aspect;
 
-import com.obsinity.telemetry.annotations.AutoFlow;
-import com.obsinity.telemetry.annotations.Attribute;
-import com.obsinity.telemetry.annotations.Flow;
-import com.obsinity.telemetry.annotations.Kind;
-import com.obsinity.telemetry.annotations.Step;
+import static org.assertj.core.api.Assertions.assertThat;
 
-import com.obsinity.telemetry.annotations.Batch;
-import com.obsinity.telemetry.annotations.OnEvent;
-import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.regex.Pattern;
 
-import com.obsinity.telemetry.model.Lifecycle;
-import com.obsinity.telemetry.model.TelemetryHolder;
-
-import com.obsinity.telemetry.processor.AttributeParamExtractor;
-import com.obsinity.telemetry.processor.TelemetryAttributeBinder;
-import com.obsinity.telemetry.processor.TelemetryProcessor;
-import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
-
-import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
-import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
-
-import io.opentelemetry.api.trace.SpanKind;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,22 +23,27 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
-import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.regex.Pattern;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.annotations.Attribute;
+import com.obsinity.telemetry.annotations.AutoFlow;
+import com.obsinity.telemetry.annotations.Flow;
+import com.obsinity.telemetry.annotations.Kind;
+import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.Step;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
+import com.obsinity.telemetry.model.Lifecycle;
+import com.obsinity.telemetry.model.TelemetryHolder;
+import com.obsinity.telemetry.processor.AttributeParamExtractor;
+import com.obsinity.telemetry.processor.TelemetryAttributeBinder;
+import com.obsinity.telemetry.processor.TelemetryProcessor;
+import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
+import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 
 @SpringBootTest(
-	classes = TelemetryIntegrationBootTest.TestApp.class,
-	webEnvironment = SpringBootTest.WebEnvironment.NONE,
-	properties = {
-		"spring.main.web-application-type=none"
-	}
-)
+		classes = TelemetryIntegrationBootTest.TestApp.class,
+		webEnvironment = SpringBootTest.WebEnvironment.NONE,
+		properties = {"spring.main.web-application-type=none"})
 class TelemetryIntegrationBootTest {
 
 	private static final Logger log = LoggerFactory.getLogger(TelemetryIntegrationBootTest.class);
@@ -92,18 +84,18 @@ class TelemetryIntegrationBootTest {
 
 		/** Build the dispatch bus that routes to @OnEvent handlers annotated with @TelemetryEventHandler. */
 		@Bean
-		TelemetryDispatchBus telemetryDispatchBus(ListableBeanFactory beanFactory,
-												  TelemetryEventHandlerScanner scanner) {
+		TelemetryDispatchBus telemetryDispatchBus(
+				ListableBeanFactory beanFactory, TelemetryEventHandlerScanner scanner) {
 			return new TelemetryDispatchBus(beanFactory, scanner);
 		}
 
 		@Bean
-		TelemetryProcessor telemetryProcessor(TelemetryAttributeBinder binder,
-											  TelemetryProcessorSupport support,
-											  TelemetryDispatchBus dispatchBus) {
+		TelemetryProcessor telemetryProcessor(
+				TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus dispatchBus) {
 			return new TelemetryProcessor(binder, support, dispatchBus) {
 				@Override
-				protected TelemetryHolder.OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
+				protected TelemetryHolder.OAttributes buildAttributes(
+						org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
 					// Base attributes for the flow
 					Map<String, Object> m = new LinkedHashMap<>();
 					m.put("test.flow", opts.name());
@@ -131,8 +123,8 @@ class TelemetryIntegrationBootTest {
 	}
 
 	/**
-	 * Test “receiver” implemented as an annotation-driven handler.
-	 * Collects starts, finishes, and root batches for assertions.
+	 * Test “receiver” implemented as an annotation-driven handler. Collects starts, finishes, and root batches for
+	 * assertions.
 	 */
 	@TelemetryEventHandler
 	static class RecordingReceiver {
@@ -141,13 +133,19 @@ class TelemetryIntegrationBootTest {
 		final List<List<TelemetryHolder>> rootBatches = new CopyOnWriteArrayList<>();
 
 		@OnEvent(lifecycle = {Lifecycle.FLOW_STARTED})
-		public void onStart(TelemetryHolder holder) { starts.add(holder); }
+		public void onStart(TelemetryHolder holder) {
+			starts.add(holder);
+		}
 
 		@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
-		public void onFinish(TelemetryHolder holder) { finishes.add(holder); }
+		public void onFinish(TelemetryHolder holder) {
+			finishes.add(holder);
+		}
 
 		@OnEvent(lifecycle = {Lifecycle.ROOT_FLOW_FINISHED})
-		public void onRoot(@Batch List<TelemetryHolder> batch) { rootBatches.add(batch); }
+		public void onRoot(List<TelemetryHolder> batch) {
+			rootBatches.add(batch);
+		}
 	}
 
 	@Kind(SpanKind.SERVER)
@@ -159,16 +157,22 @@ class TelemetryIntegrationBootTest {
 		}
 
 		@Step(name = "stepB")
-		public void stepB() { /* no-op */ }
+		public void stepB() {
+			/* no-op */
+		}
 
 		@Kind(SpanKind.PRODUCER)
 		@Step(name = "lonelyStep")
 		@AutoFlow
-		public void lonelyStep() { /* no-op */ }
+		public void lonelyStep() {
+			/* no-op */
+		}
 
 		@Kind(SpanKind.CLIENT)
 		@Flow(name = "flowClient")
-		public void flowClient() { /* no-op */ }
+		public void flowClient() {
+			/* no-op */
+		}
 
 		@Flow(name = "rootFlow")
 		public void rootFlow() {
@@ -176,18 +180,21 @@ class TelemetryIntegrationBootTest {
 		}
 
 		@Flow(name = "nestedFlow")
-		public void nestedFlow() { /* no-op */ }
+		public void nestedFlow() {
+			/* no-op */
+		}
 
 		// Example method showing how @Attribute on params would flow into OAttributes via binder
 		@Flow(name = "paramFlowExample")
 		public void paramFlowExample(
-			@Attribute(name = "user.id") String userId,
-			@Attribute(name = "flags") Map<String, Object> flags
-		) { /* no-op */ }
+				@Attribute(name = "user.id") String userId, @Attribute(name = "flags") Map<String, Object> flags) {
+			/* no-op */
+		}
 	}
 
 	@Autowired
 	TelemetryIntegrationBootTestService service;
+
 	@Autowired
 	RecordingReceiver receiver;
 
@@ -222,16 +229,16 @@ class TelemetryIntegrationBootTest {
 		Map<String, Object> flowAttrs = finish.attributes().asMap();
 		log.info("flowA attributes: {}", flowAttrs);
 		assertThat(flowAttrs)
-			.containsEntry("test.flow", "flowA")
-			.containsEntry("declaring.method", "flowA")
-			.containsEntry("custom.tag", "integration");
+				.containsEntry("test.flow", "flowA")
+				.containsEntry("declaring.method", "flowA")
+				.containsEntry("custom.tag", "integration");
 
 		assertThat(finish.events()).isNotNull().isNotEmpty();
 
 		TelemetryHolder.OEvent stepEvent = finish.events().stream()
-			.filter(e -> "stepB".equals(e.name()))
-			.findFirst()
-			.orElseThrow(() -> new AssertionError("Expected stepB event"));
+				.filter(e -> "stepB".equals(e.name()))
+				.findFirst()
+				.orElseThrow(() -> new AssertionError("Expected stepB event"));
 
 		Map<String, Object> ev = stepEvent.attributes().asMap();
 		log.info("stepB event attributes: {}", ev);
@@ -257,9 +264,9 @@ class TelemetryIntegrationBootTest {
 		Map<String, Object> attrs = start.attributes().asMap();
 		log.info("lonelyStep attributes: {}", attrs);
 		assertThat(attrs)
-			.containsEntry("test.flow", "lonelyStep")
-			.containsEntry("declaring.method", "lonelyStep")
-			.containsEntry("custom.tag", "integration");
+				.containsEntry("test.flow", "lonelyStep")
+				.containsEntry("declaring.method", "lonelyStep")
+				.containsEntry("custom.tag", "integration");
 	}
 
 	@Test
@@ -272,9 +279,7 @@ class TelemetryIntegrationBootTest {
 
 		Map<String, Object> attrs = h.attributes().asMap();
 		log.info("flowClient attributes: {}", attrs);
-		assertThat(attrs)
-			.containsEntry("test.flow", "flowClient")
-			.containsEntry("declaring.method", "flowClient");
+		assertThat(attrs).containsEntry("test.flow", "flowClient").containsEntry("declaring.method", "flowClient");
 	}
 
 	@Test
@@ -284,7 +289,10 @@ class TelemetryIntegrationBootTest {
 
 		assertThat(receiver.rootBatches).hasSize(1);
 		List<TelemetryHolder> batch = receiver.rootBatches.get(0);
-		log.info("rootFlow batch (size={}): {}", batch.size(), batch.stream().map(TelemetryHolder::name).toList());
+		log.info(
+				"rootFlow batch (size={}): {}",
+				batch.size(),
+				batch.stream().map(TelemetryHolder::name).toList());
 
 		// Execution/start order (root, then nested)
 		assertThat(batch).hasSize(2);
@@ -322,11 +330,11 @@ class TelemetryIntegrationBootTest {
 		log.info("paramFlowExample attributes: {}", attrs);
 
 		assertThat(attrs)
-			.containsEntry("user.id", "user-123")
-			.containsEntry("flags", flags)
-			// Still has the test attributes from buildAttributes()
-			.containsEntry("test.flow", "paramFlowExample")
-			.containsEntry("declaring.method", "paramFlowExample");
+				.containsEntry("user.id", "user-123")
+				.containsEntry("flags", flags)
+				// Still has the test attributes from buildAttributes()
+				.containsEntry("test.flow", "paramFlowExample")
+				.containsEntry("declaring.method", "paramFlowExample");
 	}
 
 	/* helpers */

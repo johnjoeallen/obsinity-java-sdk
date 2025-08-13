@@ -1,14 +1,17 @@
 package com.obsinity.telemetry.annotations;
 
-import com.obsinity.telemetry.model.Lifecycle;
-import io.opentelemetry.api.trace.SpanKind;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
-import java.lang.annotation.*;
+import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.model.Lifecycle;
 
 /**
- * Declares a handler method for telemetry events.
- * You can match by exact name or regex (choose one), lifecycle(s), span kind(s),
- * and optional throwable filters.
+ * Declares a handler method for telemetry events. You can match by exact name or regex (choose one), lifecycle(s), span
+ * kind(s), and optional throwable filters.
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
@@ -39,9 +42,6 @@ public @interface OnEvent {
 	/** Optional regex to match Throwable.getMessage(). */
 	String messageRegex() default "";
 
-	/**
-	 * Fully-qualified class name for the expected cause type.
-	 * Leave empty to ignore cause type matching.
-	 */
+	/** Fully-qualified class name for the expected cause type. Leave empty to ignore cause type matching. */
 	String causeType() default "";
 }

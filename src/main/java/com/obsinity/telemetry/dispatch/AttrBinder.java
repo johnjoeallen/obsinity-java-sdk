@@ -1,8 +1,8 @@
 package com.obsinity.telemetry.dispatch;
 
-import com.obsinity.telemetry.model.TelemetryHolder;
-
 import java.util.function.Function;
+
+import com.obsinity.telemetry.model.TelemetryHolder;
 
 /** Binds @Attr parameter with optional presence + conversion. */
 final class AttrBinder implements ParamBinder {
@@ -10,7 +10,7 @@ final class AttrBinder implements ParamBinder {
 	private final boolean required;
 	private final Function<String, Object> converter; // String -> target type
 
-	AttrBinder(String key, boolean required, Function<String,Object> converter) {
+	AttrBinder(String key, boolean required, Function<String, Object> converter) {
 		this.key = key;
 		this.required = required;
 		this.converter = converter;

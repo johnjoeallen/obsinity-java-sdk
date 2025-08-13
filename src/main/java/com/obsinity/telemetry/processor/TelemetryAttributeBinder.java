@@ -1,8 +1,9 @@
 package com.obsinity.telemetry.processor;
 
-import com.obsinity.telemetry.model.TelemetryHolder;
 import org.aspectj.lang.JoinPoint;
 import org.springframework.stereotype.Component;
+
+import com.obsinity.telemetry.model.TelemetryHolder;
 
 @Component
 public class TelemetryAttributeBinder {

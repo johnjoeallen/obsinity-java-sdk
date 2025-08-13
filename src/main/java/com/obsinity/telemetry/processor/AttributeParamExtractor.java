@@ -1,22 +1,23 @@
 package com.obsinity.telemetry.processor;
 
-import com.obsinity.telemetry.annotations.Attribute;
-import com.obsinity.telemetry.model.TelemetryHolder;
+import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
+import java.util.Map;
+
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.stereotype.Component;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Parameter;
-import java.util.Map;
+import com.obsinity.telemetry.annotations.Attribute;
+import com.obsinity.telemetry.model.TelemetryHolder;
 
 @Component
 public final class AttributeParamExtractor {
 
 	/**
-	 * Copies values from @Attribute parameters into the provided OAttributes.
-	 * If a parameter value is a Map<?,?>, String-keyed entries are merged.
+	 * Copies values from @Attribute parameters into the provided OAttributes. If a parameter value is a Map<?,?>,
+	 * String-keyed entries are merged.
 	 */
 	public void extractTo(TelemetryHolder.OAttributes attrs, JoinPoint jp) {
 		if (attrs == null || jp == null) {

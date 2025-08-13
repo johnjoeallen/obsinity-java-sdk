@@ -1,18 +1,18 @@
 package com.obsinity.telemetry.processor;
 
-import com.obsinity.telemetry.model.Lifecycle;
-import com.obsinity.telemetry.model.TelemetryHolder;
-import org.springframework.stereotype.Component;
-
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 
+import org.springframework.stereotype.Component;
+
+import com.obsinity.telemetry.model.Lifecycle;
+import com.obsinity.telemetry.model.TelemetryHolder;
+
 /**
- * Thread-local flow context + batching helpers.
- * Now uses TelemetryEventDispatcher to notify annotation-based handlers.
+ * Thread-local flow context + batching helpers. Now uses TelemetryEventDispatcher to notify annotation-based handlers.
  */
 @Component
 public class TelemetryProcessorSupport {
@@ -24,8 +24,8 @@ public class TelemetryProcessorSupport {
 	private final InheritableThreadLocal<Deque<TelemetryHolder>> ctx;
 
 	/**
-	 * Per-thread, per-root in-order list of finished {@link TelemetryHolder}s.
-	 * Created when the root opens; appended to on each flow finish; emitted and cleared at root exit.
+	 * Per-thread, per-root in-order list of finished {@link TelemetryHolder}s. Created when the root opens; appended to
+	 * on each flow finish; emitted and cleared at root exit.
 	 */
 	private final InheritableThreadLocal<List<TelemetryHolder>> batch;
 
@@ -103,10 +103,8 @@ public class TelemetryProcessorSupport {
 	}
 
 	/**
-	 * Notify end-of-root with the in-order list of completed holders.
-	 * Your dispatcher can either:
-	 *  - expose a dedicated method (as shown), or
-	 *  - emit a synthetic event with Lifecycle.ROOT_FLOW_FINISHED.
+	 * Notify end-of-root with the in-order list of completed holders. Your dispatcher can either: - expose a dedicated
+	 * method (as shown), or - emit a synthetic event with Lifecycle.ROOT_FLOW_FINISHED.
 	 */
 	void notifyRootFlowFinished(final List<TelemetryHolder> batchList) {
 		if (batchList == null || batchList.isEmpty()) return;
@@ -140,12 +138,14 @@ public class TelemetryProcessorSupport {
 	/* --------------------- Dispatcher contract --------------------- */
 
 	/**
-	 * Minimal dispatcher contract used by this support class.
-	 * Implementations should route to @OnEvent handlers discovered by the scanner.
+	 * Minimal dispatcher contract used by this support class. Implementations should route to @OnEvent handlers
+	 * discovered by the scanner.
 	 */
 	public interface TelemetryEventDispatcher {
 		void dispatch(Lifecycle phase, TelemetryHolder holder);
 		/** Root completion hook; keep for batching use-cases. */
-		default void dispatchRootFinished(List<TelemetryHolder> completed) { /* no-op by default */ }
+		default void dispatchRootFinished(List<TelemetryHolder> completed) {
+			/* no-op by default */
+		}
 	}
 }

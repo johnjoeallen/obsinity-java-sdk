@@ -1,9 +1,9 @@
 package com.obsinity.telemetry.dispatch;
 
-import com.obsinity.telemetry.model.TelemetryHolder;
-
 import java.util.LinkedHashMap;
 import java.util.Map;
+
+import com.obsinity.telemetry.model.TelemetryHolder;
 
 /** Binds @AllAttrs to a Map<String,Object> view of attributes. */
 final class AllAttrsBinder implements ParamBinder {

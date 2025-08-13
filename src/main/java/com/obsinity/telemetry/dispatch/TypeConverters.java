@@ -15,11 +15,12 @@ public final class TypeConverters {
 		if (target == Long.class || target == long.class) return s -> Long.parseLong(s);
 		if (target == Integer.class || target == int.class) return s -> Integer.parseInt(s);
 		if (target == Double.class || target == double.class) return s -> Double.parseDouble(s);
-		if (target == Boolean.class || target == boolean.class) return s -> {
-			if ("1".equals(s)) return Boolean.TRUE;
-			if ("0".equals(s)) return Boolean.FALSE;
-			return Boolean.parseBoolean(s);
-		};
+		if (target == Boolean.class || target == boolean.class)
+			return s -> {
+				if ("1".equals(s)) return Boolean.TRUE;
+				if ("0".equals(s)) return Boolean.FALSE;
+				return Boolean.parseBoolean(s);
+			};
 		if (target == UUID.class) return s -> UUID.fromString(s);
 		if (target == Instant.class) return s -> Instant.parse(s);
 		if (target == Duration.class) return s -> Duration.parse(s);

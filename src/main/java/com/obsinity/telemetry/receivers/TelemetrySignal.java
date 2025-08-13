@@ -1,17 +1,21 @@
 package com.obsinity.telemetry.receivers;
 
-import com.obsinity.telemetry.model.TelemetryHolder;
-
 import java.util.List;
 import java.util.Objects;
+
+import com.obsinity.telemetry.model.TelemetryHolder;
 
 /** Lightweight signal for async delivery to receivers. */
 public final class TelemetrySignal {
 
-	public enum Stage { START, FINISH, ROOT_FINISH }
+	public enum Stage {
+		START,
+		FINISH,
+		ROOT_FINISH
+	}
 
 	public final Stage stage;
-	public final TelemetryHolder holder;     // used for START/FINISH
+	public final TelemetryHolder holder; // used for START/FINISH
 	public final List<TelemetryHolder> batch; // used for ROOT_FINISH
 
 	private TelemetrySignal(Stage stage, TelemetryHolder holder, List<TelemetryHolder> batch) {

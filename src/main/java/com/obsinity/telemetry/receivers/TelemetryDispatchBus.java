@@ -1,5 +1,19 @@
 package com.obsinity.telemetry.receivers;
 
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ListableBeanFactory;
+import org.springframework.stereotype.Component;
+
+import io.opentelemetry.api.trace.SpanKind;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.dispatch.AttrBindingException;
 import com.obsinity.telemetry.dispatch.BatchBinder;
@@ -9,21 +23,14 @@ import com.obsinity.telemetry.dispatch.ParamBinder;
 import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
-import io.opentelemetry.api.trace.SpanKind;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ListableBeanFactory;
-import org.springframework.stereotype.Component;
-
-import java.lang.reflect.Method;
-import java.util.*;
 
 /**
- * Event dispatcher that routes TelemetryHolder instances to @OnEvent methods
- * declared on beans annotated with @TelemetryEventHandler.
+ * Event dispatcher that routes TelemetryHolder instances to @OnEvent methods declared on beans annotated
+ * with @TelemetryEventHandler.
  */
 @Component
-public class TelemetryDispatchBus implements com.obsinity.telemetry.processor.TelemetryProcessorSupport.TelemetryEventDispatcher {
+public class TelemetryDispatchBus
+		implements com.obsinity.telemetry.processor.TelemetryProcessorSupport.TelemetryEventDispatcher {
 
 	private static final Logger log = LoggerFactory.getLogger(TelemetryDispatchBus.class);
 
@@ -34,7 +41,8 @@ public class TelemetryDispatchBus implements com.obsinity.telemetry.processor.Te
 	public TelemetryDispatchBus(ListableBeanFactory beanFactory, TelemetryEventHandlerScanner scanner) {
 		this.scanner = scanner;
 		// Find only beans marked with @TelemetryEventHandler
-		Collection<Object> candidateBeans = beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
+		Collection<Object> candidateBeans =
+				beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
 
 		List<Handler> discovered = new ArrayList<>();
 		for (Object bean : candidateBeans) {
@@ -73,8 +81,13 @@ public class TelemetryDispatchBus implements com.obsinity.telemetry.processor.Te
 			try {
 				args = bindParams(h.binders(), holder);
 			} catch (AttrBindingException ex) {
-				log.debug("Binding error for handler={} name={} phase={} key={}: {}",
-					h.id(), holder.getName(), phase, ex.key(), ex.getMessage());
+				log.debug(
+						"Binding error for handler={} name={} phase={} key={}: {}",
+						h.id(),
+						holder.getName(),
+						phase,
+						ex.key(),
+						ex.getMessage());
 				continue;
 			}
 
@@ -84,8 +97,12 @@ public class TelemetryDispatchBus implements com.obsinity.telemetry.processor.Te
 				m.invoke(h.bean(), args);
 				any = true;
 			} catch (Throwable t) {
-				log.warn("Handler invocation failed handler={} name={} phase={}: {}",
-					h.id(), holder.getName(), phase, t.toString());
+				log.warn(
+						"Handler invocation failed handler={} name={} phase={}: {}",
+						h.id(),
+						holder.getName(),
+						phase,
+						t.toString());
 			}
 		}
 
@@ -115,11 +132,16 @@ public class TelemetryDispatchBus implements com.obsinity.telemetry.processor.Te
 				if (!m.canAccess(h.bean())) m.setAccessible(true);
 				m.invoke(h.bean(), args);
 			} catch (AttrBindingException ex) {
-				log.debug("Batch binding error handler={} phase=ROOT_FLOW_FINISHED key={}: {}",
-					h.id(), ex.key(), ex.getMessage());
+				log.debug(
+						"Batch binding error handler={} phase=ROOT_FLOW_FINISHED key={}: {}",
+						h.id(),
+						ex.key(),
+						ex.getMessage());
 			} catch (Throwable t) {
-				log.warn("Batch handler invocation failed handler={} phase=ROOT_FLOW_FINISHED: {}",
-					h.id(), t.toString());
+				log.warn(
+						"Batch handler invocation failed handler={} phase=ROOT_FLOW_FINISHED: {}",
+						h.id(),
+						t.toString());
 			}
 		}
 	}
@@ -159,9 +181,15 @@ public class TelemetryDispatchBus implements com.obsinity.telemetry.processor.Te
 			boolean match = false;
 			for (Class<? extends Throwable> cls : types) {
 				if (h.includeSubclasses()) {
-					if (cls.isInstance(t)) { match = true; break; }
+					if (cls.isInstance(t)) {
+						match = true;
+						break;
+					}
 				} else {
-					if (t.getClass().equals(cls)) { match = true; break; }
+					if (t.getClass().equals(cls)) {
+						match = true;
+						break;
+					}
 				}
 			}
 			if (!match) return false;
@@ -218,8 +246,12 @@ public class TelemetryDispatchBus implements com.obsinity.telemetry.processor.Te
 	}
 
 	private static void logMissing(Handler h, TelemetryHolder holder, Lifecycle phase, List<String> missing) {
-		log.debug("Missing required attributes handler={} name={} phase={} missing={}",
-			h.id(), holder.getName(), phase, missing);
+		log.debug(
+				"Missing required attributes handler={} name={} phase={} missing={}",
+				h.id(),
+				holder.getName(),
+				phase,
+				missing);
 	}
 
 	// --- Compatibility shims for legacy callers (enqueue*) ---
