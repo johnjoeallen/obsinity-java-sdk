@@ -1,7 +1,7 @@
 package com.obsinity.telemetry.processor;
 
+import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
-import com.obsinity.telemetry.receivers.TelemetryReceiver;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -10,8 +10,15 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 
+/**
+ * Thread-local flow context + batching helpers.
+ * Now uses TelemetryEventDispatcher to notify annotation-based handlers.
+ */
 @Component
 public class TelemetryProcessorSupport {
+
+	/** Dispatcher that delivers events to @OnEvent handlers. */
+	private final TelemetryEventDispatcher dispatcher;
 
 	/** Per-thread stack of active flows (top = current). */
 	private final InheritableThreadLocal<Deque<TelemetryHolder>> ctx;
@@ -22,14 +29,16 @@ public class TelemetryProcessorSupport {
 	 */
 	private final InheritableThreadLocal<List<TelemetryHolder>> batch;
 
-	public TelemetryProcessorSupport() {
-		this.ctx = new InheritableThreadLocal<Deque<TelemetryHolder>>() {
+	public TelemetryProcessorSupport(TelemetryEventDispatcher dispatcher) {
+		this.dispatcher = dispatcher;
+
+		this.ctx = new InheritableThreadLocal<>() {
 			@Override
 			protected Deque<TelemetryHolder> initialValue() {
 				return new ArrayDeque<>();
 			}
 		};
-		this.batch = new InheritableThreadLocal<List<TelemetryHolder>>() {
+		this.batch = new InheritableThreadLocal<>() {
 			@Override
 			protected List<TelemetryHolder> initialValue() {
 				return new ArrayList<>();
@@ -41,35 +50,26 @@ public class TelemetryProcessorSupport {
 
 	TelemetryHolder currentHolder() {
 		final Deque<TelemetryHolder> d = ctx.get();
-		if (d.isEmpty()) {
-			return null;
-		} else {
-			return d.peekLast();
-		}
+		return d.isEmpty() ? null : d.peekLast();
 	}
 
 	boolean hasActiveFlow() {
-		final Deque<TelemetryHolder> d = ctx.get();
-		return !d.isEmpty();
+		return !ctx.get().isEmpty();
 	}
 
 	void push(final TelemetryHolder h) {
-		final Deque<TelemetryHolder> d = ctx.get();
-		d.addLast(h);
+		ctx.get().addLast(h);
 	}
 
 	void pop(final TelemetryHolder expectedTop) {
 		final Deque<TelemetryHolder> d = ctx.get();
-		final boolean notEmpty = !d.isEmpty();
-		if (notEmpty) {
+		if (!d.isEmpty()) {
 			final TelemetryHolder last = d.peekLast();
 			if (last == expectedTop) {
 				d.removeLast();
 			} else {
-				d.clear();
+				d.clear(); // inconsistent nesting; reset to avoid leaks
 			}
-		} else {
-			// Intentionally empty: nothing to pop
 		}
 	}
 
@@ -81,11 +81,7 @@ public class TelemetryProcessorSupport {
 
 	void addToBatch(final TelemetryHolder finished) {
 		final List<TelemetryHolder> list = batch.get();
-		if (list != null && finished != null) {
-			list.add(finished);
-		} else {
-			// Intentionally empty: nothing to add
-		}
+		if (list != null && finished != null) list.add(finished);
 	}
 
 	List<TelemetryHolder> finishBatchAndGet() {
@@ -94,63 +90,39 @@ public class TelemetryProcessorSupport {
 		return out;
 	}
 
-	/* --------------------- receiver notifications --------------------- */
+	/* --------------------- handler notifications (via dispatcher) --------------------- */
 
-	void notifyFlowStarted(final List<TelemetryReceiver> receivers, final TelemetryHolder holder) {
-		if (receivers == null || receivers.isEmpty() || holder == null) {
-			return;
-		}
-		for (TelemetryReceiver r : receivers) {
-			try {
-				r.flowStarted(holder);
-			} catch (Exception ignored) {
-				// Intentionally ignore receiver exceptions to avoid breaking the flow
-			}
-		}
+	void notifyFlowStarted(final TelemetryHolder holder) {
+		if (holder == null) return;
+		safe(() -> dispatcher.dispatch(Lifecycle.FLOW_STARTED, holder));
 	}
 
-	void notifyFlowFinished(final List<TelemetryReceiver> receivers, final TelemetryHolder holder) {
-		if (receivers == null || receivers.isEmpty() || holder == null) {
-			return;
-		}
-		for (TelemetryReceiver r : receivers) {
-			try {
-				r.flowFinished(holder);
-			} catch (Exception ignored) {
-				// Intentionally ignore receiver exceptions to avoid breaking the flow
-			}
-		}
+	void notifyFlowFinished(final TelemetryHolder holder) {
+		if (holder == null) return;
+		safe(() -> dispatcher.dispatch(Lifecycle.FLOW_FINISHED, holder));
 	}
 
-	void notifyRootFlowFinished(final List<TelemetryReceiver> receivers, final List<TelemetryHolder> batchList) {
-		if (receivers == null || receivers.isEmpty() || batchList == null || batchList.isEmpty()) {
-			return;
-		}
-		for (TelemetryReceiver r : receivers) {
-			try {
-				r.rootFlowFinished(batchList);
-			} catch (Exception ignored) {
-				// Intentionally ignore receiver exceptions to avoid breaking the flow
-			}
-		}
+	/**
+	 * Notify end-of-root with the in-order list of completed holders.
+	 * Your dispatcher can either:
+	 *  - expose a dedicated method (as shown), or
+	 *  - emit a synthetic event with Lifecycle.ROOT_FLOW_FINISHED.
+	 */
+	void notifyRootFlowFinished(final List<TelemetryHolder> batchList) {
+		if (batchList == null || batchList.isEmpty()) return;
+		safe(() -> dispatcher.dispatchRootFinished(batchList));
 	}
 
 	/* --------------------- mutation helpers --------------------- */
 
 	void setEndTime(final TelemetryHolder h, final Instant end) {
-		if (h != null) {
-			h.setEndTimestamp(end); // assumes setter exists
-		} else {
-			// Intentionally empty: nothing to mutate
-		}
+		if (h != null) h.setEndTimestamp(end);
 	}
 
 	/* --------------------- utility --------------------- */
 
 	long unixNanos(final Instant ts) {
-		final long seconds = ts.getEpochSecond();
-		final int nanos = ts.getNano();
-		return seconds * 1_000_000_000L + nanos;
+		return ts.getEpochSecond() * 1_000_000_000L + ts.getNano();
 	}
 
 	interface UnsafeRunnable {
@@ -161,7 +133,19 @@ public class TelemetryProcessorSupport {
 		try {
 			r.run();
 		} catch (Exception ignored) {
-			// Intentionally ignore hook/receiver exceptions to keep the main flow healthy
+			// Intentionally ignore to keep the main flow healthy
 		}
+	}
+
+	/* --------------------- Dispatcher contract --------------------- */
+
+	/**
+	 * Minimal dispatcher contract used by this support class.
+	 * Implementations should route to @OnEvent handlers discovered by the scanner.
+	 */
+	public interface TelemetryEventDispatcher {
+		void dispatch(Lifecycle phase, TelemetryHolder holder);
+		/** Root completion hook; keep for batching use-cases. */
+		default void dispatchRootFinished(List<TelemetryHolder> completed) { /* no-op by default */ }
 	}
 }

@@ -5,13 +5,22 @@ import com.obsinity.telemetry.annotations.Attribute;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
 import com.obsinity.telemetry.annotations.Step;
+
+import com.obsinity.telemetry.annotations.Batch;
+import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+
+import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
+
 import com.obsinity.telemetry.processor.AttributeParamExtractor;
 import com.obsinity.telemetry.processor.TelemetryAttributeBinder;
 import com.obsinity.telemetry.processor.TelemetryProcessor;
 import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
+
+import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
-import com.obsinity.telemetry.receivers.TelemetryReceiver;
+
 import io.opentelemetry.api.trace.SpanKind;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -19,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -71,14 +81,20 @@ class TelemetryIntegrationBootTest {
 		}
 
 		@Bean
-		TelemetryProcessorSupport telemetryProcessorSupport() {
-			return new TelemetryProcessorSupport();
+		TelemetryProcessorSupport telemetryProcessorSupport(TelemetryDispatchBus dispatchBus) {
+			return new TelemetryProcessorSupport(dispatchBus);
 		}
 
-		/** Build the async dispatch bus from all discovered receivers. */
 		@Bean
-		TelemetryDispatchBus telemetryDispatchBus(List<TelemetryReceiver> receivers) {
-			return new TelemetryDispatchBus(receivers);
+		TelemetryEventHandlerScanner telemetryEventHandlerScanner() {
+			return new TelemetryEventHandlerScanner();
+		}
+
+		/** Build the dispatch bus that routes to @OnEvent handlers annotated with @TelemetryEventHandler. */
+		@Bean
+		TelemetryDispatchBus telemetryDispatchBus(ListableBeanFactory beanFactory,
+												  TelemetryEventHandlerScanner scanner) {
+			return new TelemetryDispatchBus(beanFactory, scanner);
 		}
 
 		@Bean
@@ -114,25 +130,24 @@ class TelemetryIntegrationBootTest {
 		}
 	}
 
-	static class RecordingReceiver implements TelemetryReceiver {
+	/**
+	 * Test “receiver” implemented as an annotation-driven handler.
+	 * Collects starts, finishes, and root batches for assertions.
+	 */
+	@TelemetryEventHandler
+	static class RecordingReceiver {
 		final List<TelemetryHolder> starts = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> finishes = new CopyOnWriteArrayList<>();
 		final List<List<TelemetryHolder>> rootBatches = new CopyOnWriteArrayList<>();
 
-		@Override
-		public void flowStarted(TelemetryHolder holder) {
-			starts.add(holder);
-		}
+		@OnEvent(lifecycle = {Lifecycle.FLOW_STARTED})
+		public void onStart(TelemetryHolder holder) { starts.add(holder); }
 
-		@Override
-		public void flowFinished(TelemetryHolder holder) {
-			finishes.add(holder);
-		}
+		@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
+		public void onFinish(TelemetryHolder holder) { finishes.add(holder); }
 
-		@Override
-		public void rootFlowFinished(List<TelemetryHolder> batch) {
-			rootBatches.add(batch);
-		}
+		@OnEvent(lifecycle = {Lifecycle.ROOT_FLOW_FINISHED})
+		public void onRoot(@Batch List<TelemetryHolder> batch) { rootBatches.add(batch); }
 	}
 
 	@Kind(SpanKind.SERVER)

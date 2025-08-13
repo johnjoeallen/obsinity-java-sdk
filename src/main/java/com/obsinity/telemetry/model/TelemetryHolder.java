@@ -1,5 +1,6 @@
 package com.obsinity.telemetry.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import io.opentelemetry.api.common.AttributeKey;
@@ -68,6 +69,10 @@ public class TelemetryHolder {
 	private Map<String, Object> extensions;    // mutable free-form
 	private Boolean synthetic;
 
+	/* ── Error/exception context (non-serialized) ────────────────── */
+	@JsonIgnore
+	private transient Throwable throwable;   // NEW: optional throwable associated with this holder
+
 	/* ── Event context cursor (for nested steps) ──────────────────── */
 	private final Deque<OEvent> eventStack = new ArrayDeque<>();
 
@@ -133,9 +138,106 @@ public class TelemetryHolder {
 	public Map<String, Object> extensions() { return extensions; } // MUTABLE
 	public Boolean synthetic() { return synthetic; }
 
+	/* ===== Compatibility getters for dispatcher/binders (conventional style) ==== */
+	public String getName() { return name; }                 // convenience
+	public SpanKind getSpanKind() { return kind; }           // convenience
+
 	/* Minimal mutators we actually use from the processor */
 	public void setEndTimestamp(Instant endTimestamp) {
 		this.endTimestamp = endTimestamp;
+	}
+
+	/* ========================= Throwable helpers ========================= */
+	/** Returns the associated throwable (may be null). */
+	public Throwable throwable() { return throwable; }
+
+	/** Conventional accessor for frameworks. */
+	public Throwable getThrowable() { return throwable; }
+
+	/** Sets/overwrites the associated throwable. */
+	public void setThrowable(Throwable throwable) { this.throwable = throwable; }
+
+	/** @return true if a throwable is present. */
+	public boolean hasThrowable() { return throwable != null; }
+
+	/* ========================= Attribute convenience ========================= */
+
+	/** @return true if an attribute key is present on the span-level attributes. */
+	public boolean hasAttr(String key) {
+		return key != null && attributes != null && attributes.asMap().containsKey(key);
+	}
+
+	/**
+	 * Returns the attribute value coerced to String, or null if not present.
+	 * For numbers/booleans, uses {@code toString()}. For other objects, also {@code toString()}.
+	 */
+	public String attr(String key) {
+		if (!hasAttr(key)) return null;
+		Object v = attributes.asMap().get(key);
+		if (v == null) return null;
+		if (v instanceof String s) return s;
+		return v.toString();
+	}
+
+	/** Returns attribute as Long if possible (handles String and Number), else null. */
+	public Long attrAsLong(String key) {
+		if (!hasAttr(key)) return null;
+		Object v = attributes.asMap().get(key);
+		if (v instanceof Number n) return n.longValue();
+		if (v instanceof String s) {
+			try { return Long.parseLong(s); } catch (NumberFormatException e) { return null; }
+		}
+		return null;
+	}
+
+	/** Returns attribute as Integer if possible, else null. */
+	public Integer attrAsInt(String key) {
+		if (!hasAttr(key)) return null;
+		Object v = attributes.asMap().get(key);
+		if (v instanceof Number n) return n.intValue();
+		if (v instanceof String s) {
+			try { return Integer.parseInt(s); } catch (NumberFormatException e) { return null; }
+		}
+		return null;
+	}
+
+	/** Returns attribute as Double if possible, else null. */
+	public Double attrAsDouble(String key) {
+		if (!hasAttr(key)) return null;
+		Object v = attributes.asMap().get(key);
+		if (v instanceof Number n) return n.doubleValue();
+		if (v instanceof String s) {
+			try { return Double.parseDouble(s); } catch (NumberFormatException e) { return null; }
+		}
+		return null;
+	}
+
+	/** Returns attribute as Boolean if possible, else null. Accepts "true/false", "1/0". */
+	public Boolean attrAsBoolean(String key) {
+		if (!hasAttr(key)) return null;
+		Object v = attributes.asMap().get(key);
+		if (v instanceof Boolean b) return b;
+		if (v instanceof Number n) return n.intValue() != 0;
+		if (v instanceof String s) {
+			if ("1".equals(s)) return Boolean.TRUE;
+			if ("0".equals(s)) return Boolean.FALSE;
+			return Boolean.parseBoolean(s);
+		}
+		return null;
+	}
+
+	/**
+	 * Returns a String→String view of attributes (values coerced via {@code toString()}).
+	 * The returned map is a shallow copy and safe to expose.
+	 */
+	public Map<String, String> stringAttributes() {
+		Map<String, Object> src = (attributes != null ? attributes.asMap() : Map.of());
+		Map<String, String> out = new LinkedHashMap<>(src.size());
+		for (Map.Entry<String, Object> e : src.entrySet()) {
+			Object v = e.getValue();
+			out.put(e.getKey(), v == null ? null : (v instanceof String s ? s : v.toString()));
+		}
+		return out;
 	}
 
 	/* ========================= Behavior ========================= */
@@ -290,9 +392,7 @@ public class TelemetryHolder {
 		public Map<String, Object> asMap() { return asMap; }
 
 		/**
-		 * Q: Should be ObjectMapper things that are not basic types?
-		 * @param key
-		 * @param value
+		 * Put a key/value (null keys are ignored).
 		 */
 		public void put(String key, Object value) {
 			if (key != null) {

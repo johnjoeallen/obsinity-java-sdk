@@ -3,6 +3,9 @@ package com.obsinity.telemetry.receivers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,18 +15,19 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Default receiver that logs TelemetryHolder snapshots on flow start/finish.
+ * Default handler that logs TelemetryHolder snapshots on flow start/finish.
  * - INFO: compact line with key identifiers
  * - DEBUG: pretty JSON payload of the entire holder
  */
+@TelemetryEventHandler
 @Component
-public class LoggingTelemetryReceiver implements TelemetryReceiver {
+public class LoggingTelemetryEventHandler {
 
-	private static final Logger log = LoggerFactory.getLogger(LoggingTelemetryReceiver.class);
+	private static final Logger log = LoggerFactory.getLogger(LoggingTelemetryEventHandler.class);
 
 	private final ObjectMapper mapper;
 
-	public LoggingTelemetryReceiver(ObjectMapper mapper) {
+	public LoggingTelemetryEventHandler(ObjectMapper mapper) {
 		// Use the Spring Boot mapper if provided; otherwise create a safe default.
 		if (mapper != null) {
 			this.mapper = mapper.copy().enable(SerializationFeature.INDENT_OUTPUT);
@@ -32,13 +36,8 @@ public class LoggingTelemetryReceiver implements TelemetryReceiver {
 		}
 	}
 
-	@Override
-	public void rootFlowFinished(List<TelemetryHolder> completed) {
-		log.info("rootFlowFinished count={}", completed.size());
-	}
-
-	@Override
-	public void flowStarted(TelemetryHolder h) {
+	@OnEvent(lifecycle = {Lifecycle.FLOW_STARTED})
+	public void onFlowStarted(TelemetryHolder h) {
 		if (h == null) return;
 		log.info("obsinity flow-start name={} kind={} traceId={} spanId={} parentSpanId={} serviceId={} correlationId={}",
 			safe(h.name()), safe(h.kind()), safe(h.traceId()), safe(h.spanId()), safe(h.parentSpanId()),
@@ -48,8 +47,8 @@ public class LoggingTelemetryReceiver implements TelemetryReceiver {
 		}
 	}
 
-	@Override
-	public void flowFinished(TelemetryHolder h) {
+	@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
+	public void onFlowFinished(TelemetryHolder h) {
 		if (h == null) return;
 
 		final List<TelemetryHolder.OEvent> events = (h.events() != null) ? h.events() : List.of();
@@ -62,15 +61,16 @@ public class LoggingTelemetryReceiver implements TelemetryReceiver {
 
 		// One line per event (INFO)
 		for (TelemetryHolder.OEvent e : events) {
-			Long duration = duration(e.epochNanos(), e.endEpochNanos());
-			int attrCount = (e.attributes() != null && e.attributes().asMap() != null) ? e.attributes().asMap().size() : 0;
+			Long durationMillis = durationMillis(e.epochNanos(), e.endEpochNanos());
+			int attrCount = (e.attributes() != null && e.attributes().asMap() != null)
+				? e.attributes().asMap().size() : 0;
 
 			log.info(
-				"obsinity flow-finish event name={} time={} endTime={} durationNanos={} attributes={}",
+				"obsinity flow-finish event name={} startNanos={} endNanos={} durationMillis={} attributes={}",
 				safe(e.name()),
 				e.epochNanos(),
 				e.endEpochNanos(),
-				duration == null ? "-" : duration,
+				durationMillis == null ? "-" : durationMillis,
 				attrCount
 			);
 		}
@@ -81,13 +81,13 @@ public class LoggingTelemetryReceiver implements TelemetryReceiver {
 		}
 	}
 
-	private static Long duration(Long start, Long end) {
-		if (start == null || end == null) return null; // treat unknowns as unknown
-		long diffNanos = end.longValue() - start.longValue();
+	private static Long durationMillis(Long startNanos, Long endNanos) {
+		if (startNanos == null || endNanos == null) return null; // treat unknowns as unknown
+		long diffNanos = endNanos - startNanos;
 		return Math.floorDiv(diffNanos, 1_000_000L);   // nanos → millis (handles negatives correctly)
 	}
 
-	private static Long duration(Instant start, Instant end) {
+	private static Long durationMillis(Instant start, Instant end) {
 		if (start == null || end == null) return null;
 		return java.time.Duration.between(start, end).toMillis();
 	}
