@@ -52,7 +52,7 @@
                             <formatJavadoc>true</formatJavadoc>
                         </palantirJavaFormat>
                         <importOrder>
-                            <order>java|jakarta,lombok|org, ,|com.mastercard,\#com.mastercard,\#</order>
+                            <order>java|jakarta,lombok|org,|com.obsinity</order>
                         </importOrder>
                         <indent>
                             <tabs>true</tabs>
