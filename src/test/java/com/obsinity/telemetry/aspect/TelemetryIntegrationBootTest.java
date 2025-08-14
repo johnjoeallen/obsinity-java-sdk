@@ -23,7 +23,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.AutoFlow;
 import com.obsinity.telemetry.annotations.BindEventAttribute;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
@@ -190,7 +189,6 @@ class TelemetryIntegrationBootTest {
 
 		@Kind(SpanKind.PRODUCER)
 		@Step(name = "lonelyStep")
-		@AutoFlow
 		public void lonelyStep() {
 			/* no-op */
 		}

@@ -25,7 +25,6 @@ import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.test.annotation.DirtiesContext;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.AutoFlow;
 import com.obsinity.telemetry.annotations.BindAllContextValues;
 import com.obsinity.telemetry.annotations.BindContextValue;
 import com.obsinity.telemetry.annotations.BindEventAttribute;
@@ -160,7 +159,6 @@ class TelemetryOnEventParamBindingTest {
 
 		@Kind(SpanKind.PRODUCER)
 		@Step(name = "lonelyStep")
-		@AutoFlow
 		public void lonelyStep() {
 			/* no-op */
 		}

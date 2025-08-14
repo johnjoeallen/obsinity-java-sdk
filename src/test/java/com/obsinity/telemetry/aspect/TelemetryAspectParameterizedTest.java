@@ -8,7 +8,6 @@ import static org.mockito.Mockito.times;
 import java.lang.reflect.Method;
 import java.util.stream.Stream;
 
-import org.apache.logging.log4j.spi.StandardLevel;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -23,8 +22,8 @@ import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
-import com.obsinity.telemetry.annotations.AutoFlow;
 import com.obsinity.telemetry.annotations.Flow;
+import com.obsinity.telemetry.annotations.OrphanAlert;
 import com.obsinity.telemetry.annotations.Step;
 import com.obsinity.telemetry.processor.TelemetryProcessor;
 
@@ -118,13 +117,12 @@ class TelemetryAspectParameterizedTest {
 		}
 
 		@Step(name = "doStep")
-		@AutoFlow
 		public String doStepAutoFlow() {
 			return "ok";
 		}
 
 		@Step(name = "doStep")
-		@AutoFlow(level = StandardLevel.WARN)
+		@OrphanAlert(level = OrphanAlert.Level.WARN)
 		public String doStepAutoFlowWWarn() {
 			return "ok";
 		}

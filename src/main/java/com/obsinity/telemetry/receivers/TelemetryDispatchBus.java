@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -16,6 +17,7 @@ import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.stereotype.Component;
 
 import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.annotations.BindAllAttributes;
 import com.obsinity.telemetry.annotations.BindAllContextValues;
 import com.obsinity.telemetry.annotations.BindContextValue;
 import com.obsinity.telemetry.annotations.BindEventAttribute;
@@ -46,7 +48,7 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		this.scanner = scanner;
 		// Find only beans marked with @TelemetryEventHandler
 		Collection<Object> candidateBeans =
-				beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
+			beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
 
 		List<Handler> discovered = new ArrayList<>();
 		for (Object bean : candidateBeans) {
@@ -86,12 +88,12 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				args = bindParams(h, holder);
 			} catch (AttrBindingException ex) {
 				log.debug(
-						"Binding error for handler={} name={} phase={} key={}: {}",
-						h.id(),
-						holder.getName(),
-						phase,
-						ex.key(),
-						ex.getMessage());
+					"Binding error for handler={} name={} phase={} key={}: {}",
+					h.id(),
+					holder.getName(),
+					phase,
+					ex.key(),
+					ex.getMessage());
 				continue;
 			}
 
@@ -102,11 +104,11 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				any = true;
 			} catch (Throwable t) {
 				log.warn(
-						"Handler invocation failed handler={} name={} phase={}: {}",
-						h.id(),
-						holder.getName(),
-						phase,
-						t.toString());
+					"Handler invocation failed handler={} name={} phase={}: {}",
+					h.id(),
+					holder.getName(),
+					phase,
+					t.toString());
 			}
 		}
 
@@ -136,15 +138,15 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				m.invoke(h.bean(), args);
 			} catch (AttrBindingException ex) {
 				log.debug(
-						"Batch binding error handler={} phase=ROOT_FLOW_FINISHED key={}: {}",
-						h.id(),
-						ex.key(),
-						ex.getMessage());
+					"Batch binding error handler={} phase=ROOT_FLOW_FINISHED key={}: {}",
+					h.id(),
+					ex.key(),
+					ex.getMessage());
 			} catch (Throwable t) {
 				log.warn(
-						"Batch handler invocation failed handler={} phase=ROOT_FLOW_FINISHED: {}",
-						h.id(),
-						t.toString());
+					"Batch handler invocation failed handler={} phase=ROOT_FLOW_FINISHED: {}",
+					h.id(),
+					t.toString());
 			}
 		}
 	}
@@ -219,9 +221,11 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 	/**
 	 * Bind params for single-holder dispatch. First tries declared ParamBinders; if a slot isn't provided by a binder,
-	 * it falls back to: - TelemetryHolder injection - @Attribute(name="...") value from holder.attributes()
-	 * - @EventContextParam(name="...") from holder.eventContext() (flow-scoped) - @AllEventContextParam Map view of
-	 * holder.eventContext()
+	 * it falls back to: - TelemetryHolder injection
+	 * - @BindEventAttribute(name="...") value from holder.attributes()
+	 * - @BindContextValue(name="...") from holder.getEventContext() (flow-scoped)
+	 * - @BindAllContextValues Map view of holder.getEventContext()
+	 * - @BindAllAttributes Map snapshot of holder.attributes().asMap()
 	 */
 	private static Object[] bindParams(Handler h, TelemetryHolder holder) {
 		List<ParamBinder> binders = h.binders();
@@ -252,14 +256,14 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 					val = holder;
 
 				} else {
-					// @Attribute on handler param
+					// @BindEventAttribute on handler param
 					BindEventAttribute attr = p.getAnnotation(BindEventAttribute.class);
 					if (attr != null) {
 						Object raw = holder.attributes().asMap().get(attr.name());
 						val = coerce(raw, p.getType());
 					}
 
-					// @EventContextParam on handler param (flow-scoped fallback)
+					// @BindContextValue on handler param (flow-scoped)
 					if (val == null) {
 						BindContextValue ecp = p.getAnnotation(BindContextValue.class);
 						if (ecp != null) {
@@ -268,9 +272,14 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 						}
 					}
 
-					// @AllEventContextParam → unmodifiable view of flow-scoped EventContext
+					// @BindAllContextValues Map view of event context (unmodifiable)
 					if (val == null && p.isAnnotationPresent(BindAllContextValues.class)) {
 						val = Collections.unmodifiableMap(holder.getEventContext());
+					}
+
+					// @BindAllAttributes Map snapshot of event attributes (unmodifiable)
+					if (val == null && p.isAnnotationPresent(BindAllAttributes.class)) {
+						val = Collections.unmodifiableMap(new LinkedHashMap<>(holder.attributes().asMap()));
 					}
 				}
 			}
@@ -282,7 +291,7 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 	/**
 	 * Bind params for batch dispatch. Supports BatchBinder, optional TelemetryHolder (root/first) injection,
-	 * and @Attribute on handler params sourced from the first holder in the batch.
+	 * @BindEventAttribute sourced from the root holder, @BindAllContextValues (root) and @BindAllAttributes (root).
 	 */
 	private static Object[] bindBatchParams(Handler h, List<TelemetryHolder> batch) {
 		List<ParamBinder> binders = h.binders();
@@ -323,6 +332,12 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 						Object raw = root.attributes().asMap().get(attr.name());
 						val = coerce(raw, p.getType());
 					}
+					if (val == null && p.isAnnotationPresent(BindAllContextValues.class)) {
+						val = Collections.unmodifiableMap(root.getEventContext());
+					}
+					if (val == null && p.isAnnotationPresent(BindAllAttributes.class)) {
+						val = Collections.unmodifiableMap(new LinkedHashMap<>(root.attributes().asMap()));
+					}
 				}
 			}
 
@@ -342,11 +357,11 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 	private static void logMissing(Handler h, TelemetryHolder holder, Lifecycle phase, List<String> missing) {
 		log.debug(
-				"Missing required attributes handler={} name={} phase={} missing={}",
-				h.id(),
-				holder.getName(),
-				phase,
-				missing);
+			"Missing required attributes handler={} name={} phase={} missing={}",
+			h.id(),
+			holder.getName(),
+			phase,
+			missing);
 	}
 
 	// --- Compatibility shims for legacy callers (enqueue*) ---

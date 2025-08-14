@@ -1,5 +1,11 @@
 package com.obsinity.telemetry.annotations;
 
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
 /**
  * Binds a {@link Throwable} from the {@code TelemetryHolder} into the parameter. If {@code required=true} and the
  * selected throwable source is missing, the binding fails.
