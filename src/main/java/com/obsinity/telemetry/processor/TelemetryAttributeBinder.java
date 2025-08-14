@@ -4,6 +4,7 @@ import java.lang.reflect.Parameter;
 
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -42,6 +43,7 @@ public class TelemetryAttributeBinder {
 	/**
 	 * Preferred constructor when you want {@link PushContextValue} to route via {@link TelemetryContext}.
 	 */
+	@Autowired
 	public TelemetryAttributeBinder(AttributeParamExtractor extractor, @Nullable TelemetryContext telemetryContext) {
 		this.extractor = extractor;
 		this.telemetryContext = telemetryContext;
