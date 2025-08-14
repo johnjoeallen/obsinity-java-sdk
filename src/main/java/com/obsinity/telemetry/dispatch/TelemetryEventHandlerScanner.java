@@ -11,7 +11,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
-import java.util.function.UnaryOperator;
 import java.util.regex.Pattern;
 
 import com.obsinity.telemetry.annotations.PullAllContextValues;
@@ -30,13 +29,26 @@ import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /**
- * Scans beans for @OnEvent methods, but only if the bean's user class is annotated with @TelemetryEventHandler.
+ * Scans beans for methods annotated with {@link OnEvent} on classes marked with
+ * {@link TelemetryEventHandler} and produces immutable {@link Handler} descriptors.
  *
- * <p>Supported handler parameter binding: - @PullAttribute("key"): bind a single persisted attribute (required if
- * the annotation says so) - @BindEventThrowable: bind the event's Throwable (SELF, CAUSE, ROOT_CAUSE)
- * - @PullContextValue("key"): bind a single ephemeral context value - @BindAllContextValues: bind the entire event
- * context map (must target Map<String,Object>) - TelemetryHolder: inject the holder - List<?> (batch): only allowed for
- * lifecycle=ROOT_FLOW_FINISHED
+ * <p><b>Name matching:</b> this scanner supports exact name ( {@code @OnEvent(name="...")} or {@code @OnEvent("...")} )
+ * and prefix matching ( {@code @OnEvent(namePrefix="...")} ). Regex name matching is removed.</p>
+ *
+ * <p><b>Filters:</b> lifecycle ({@link OnEvent#lifecycle()}), span kind ({@link OnEvent#kinds()}),
+ * throwable presence/types/message/cause ({@link OnEvent#requireThrowable()}, {@link OnEvent#throwableTypes()},
+ * {@link OnEvent#messageRegex()}, {@link OnEvent#causeType()}).</p>
+ *
+ * <p><b>Parameter binding:</b>
+ * <ul>
+ *   <li>{@code @PullAttribute("key")} or {@code @PullAttribute(name="key")} – persisted attribute (optional required flag).</li>
+ *   <li>{@code @PullContextValue("key")} or {@code @PullContextValue(name="key")} – ephemeral context value.</li>
+ *   <li>{@code @PullAllContextValues} – full event context map (must be {@code Map}).</li>
+ *   <li>{@code @BindEventThrowable} – bind event throwable (per enum source).</li>
+ *   <li>{@code TelemetryHolder} – inject holder.</li>
+ *   <li>{@code List<TelemetryHolder>} – only for {@code lifecycle=ROOT_FLOW_FINISHED} (batch handlers).</li>
+ * </ul>
+ * </p>
  */
 @Component
 public final class TelemetryEventHandlerScanner {
@@ -44,7 +56,7 @@ public final class TelemetryEventHandlerScanner {
 	public List<Handler> scan(Object bean) {
 		Class<?> userClass = resolveUserClass(bean);
 
-		// Only scan classes marked as TelemetryEventHandler
+		// Only scan classes marked with @TelemetryEventHandler
 		if (userClass == null || !userClass.isAnnotationPresent(TelemetryEventHandler.class)) {
 			return List.of(); // skip silently
 		}
@@ -56,8 +68,8 @@ public final class TelemetryEventHandlerScanner {
 
 			validateNameSelectors(on, m);
 
-			String exact = on.name().isBlank() ? null : on.name();
-			Pattern namePat = on.nameRegex().isBlank() ? null : Pattern.compile(on.nameRegex());
+			String exact = on.name().isBlank() ? (on.value().isBlank() ? null : on.value()) : on.name();
+			String namePrefix = on.namePrefix().isBlank() ? null : on.namePrefix();
 
 			BitSet lifecycleMask = bitset(on.lifecycle(), Lifecycle.values().length, lc -> lc.ordinal());
 			BitSet kindMask = bitset(on.kinds(), SpanKind.values().length, k -> k.ordinal());
@@ -70,7 +82,7 @@ public final class TelemetryEventHandlerScanner {
 					causeType = ClassUtils.resolveClassName(on.causeType(), userClass.getClassLoader());
 				} catch (IllegalArgumentException e) {
 					throw new IllegalArgumentException(
-							"@OnEvent causeType not found: " + on.causeType() + " on " + signature(userClass, m));
+						"@OnEvent causeType not found: " + on.causeType() + " on " + signature(userClass, m));
 				}
 			}
 
@@ -89,22 +101,22 @@ public final class TelemetryEventHandlerScanner {
 				PullAllContextValues aec = p.getAnnotation(PullAllContextValues.class);
 
 				if (attr != null) {
-					String key = attr.name();
+					String key = readAlias(attr); // supports name() or value()
 					boolean required = safeRequired(attr);
 					if (required) requiredAttrs.add(key);
 					Function<Object, Object> objConverter = o -> coerceForParam(o, p.getType());
 					binders.add(new AttrBinder(key, required, objConverter, p.getType()));
 				} else if (thr != null) {
 					// Use enum-based selection for which throwable to bind
-					binders.add(new ThrowableBinder(thr.required(), thr.source())); // ErrBinder should accept the enum
+					binders.add(new ThrowableBinder(thr.required(), thr.source()));
 				} else if (ecp != null) {
 					// Single value from EventContext
-					binders.add(new EventContextBinder(ecp.name(), p.getType()));
+					binders.add(new EventContextBinder(readAlias(ecp), p.getType()));
 				} else if (aec != null) {
 					// Whole EventContext map
 					if (!Map.class.isAssignableFrom(p.getType())) {
 						throw new IllegalArgumentException(
-								"@BindAllContextValues parameter must be a Map: " + signature(userClass, m));
+							"@PullAllContextValues parameter must be a Map: " + signature(userClass, m));
 					}
 					binders.add(new AllEventContextBinder());
 				} else if (List.class.isAssignableFrom(p.getType())) {
@@ -115,7 +127,7 @@ public final class TelemetryEventHandlerScanner {
 					binders.add(new HolderBinder());
 				} else {
 					throw new IllegalArgumentException(
-							"Unsupported parameter binding on " + signature(userClass, m) + " for parameter: " + p);
+						"Unsupported parameter binding on " + signature(userClass, m) + " for parameter: " + p);
 				}
 			}
 
@@ -123,20 +135,20 @@ public final class TelemetryEventHandlerScanner {
 			String id = userClass.getSimpleName() + "#" + m.getName();
 
 			out.add(new Handler(
-					bean,
-					m,
-					exact,
-					namePat,
-					lifecycleMask,
-					kindMask,
-					on.requireThrowable(),
-					types,
-					on.includeSubclasses(),
-					msgPat,
-					causeType,
-					List.copyOf(binders),
-					Set.copyOf(requiredAttrs),
-					id));
+				bean,
+				m,
+				exact,
+				namePrefix,           // <-- prefix, not regex
+				lifecycleMask,
+				kindMask,
+				on.requireThrowable(),
+				types,
+				on.includeSubclasses(),
+				msgPat,
+				causeType,
+				List.copyOf(binders),
+				Set.copyOf(requiredAttrs),
+				id));
 		}
 		return out;
 	}
@@ -154,23 +166,24 @@ public final class TelemetryEventHandlerScanner {
 		return ClassUtils.getUserClass(candidate);
 	}
 
+	/** Validate that only one of exact name or prefix is provided. */
 	private static void validateNameSelectors(OnEvent on, Method m) {
-		boolean hasExact = !on.name().isBlank();
-		boolean hasRegex = !on.nameRegex().isBlank();
-		if (hasExact && hasRegex) {
+		boolean hasExact = !(on.name().isBlank() && on.value().isBlank());
+		boolean hasPrefix = !on.namePrefix().isBlank();
+		if (hasExact && hasPrefix) {
 			throw new IllegalArgumentException(
-					"@OnEvent cannot set both name and nameRegex on " + signature(m.getDeclaringClass(), m));
+				"@OnEvent cannot set both name/name(value) and namePrefix on " + signature(m.getDeclaringClass(), m));
 		}
 	}
 
 	private static void validateListParamAllowed(OnEvent on, Class<?> userClass, Method m) {
 		var lifecycles = Arrays.asList(on.lifecycle());
 		boolean onlyRootFinished =
-				!lifecycles.isEmpty() && lifecycles.stream().allMatch(lc -> lc == Lifecycle.ROOT_FLOW_FINISHED);
+			!lifecycles.isEmpty() && lifecycles.stream().allMatch(lc -> lc == Lifecycle.ROOT_FLOW_FINISHED);
 		if (!onlyRootFinished) {
 			throw new IllegalArgumentException(
-					"List<TelemetryHolder> parameters are only allowed for lifecycle=ROOT_FLOW_FINISHED on "
-							+ signature(userClass, m));
+				"List<TelemetryHolder> parameters are only allowed for lifecycle=ROOT_FLOW_FINISHED on "
+					+ signature(userClass, m));
 		}
 	}
 
@@ -235,5 +248,32 @@ public final class TelemetryEventHandlerScanner {
 		}
 		// Unknown or custom types: best effort—return raw and let reflection fail fast if truly incompatible.
 		return raw;
+	}
+
+	/* ===== Helpers to support @AliasFor(name/value) on annotations ===== */
+
+	private static String readAlias(PullAttribute ann) {
+		// Prefer name() if present & non-empty, else value()
+		String key = invokeIfPresent(ann, "name");
+		if (key == null || key.isEmpty()) key = invokeIfPresent(ann, "value");
+		return key;
+	}
+
+	private static String readAlias(PullContextValue ann) {
+		String key = invokeIfPresent(ann, "name");
+		if (key == null || key.isEmpty()) key = invokeIfPresent(ann, "value");
+		return key;
+	}
+
+	private static String invokeIfPresent(Object ann, String method) {
+		try {
+			var m = ann.getClass().getMethod(method); // use runtime class; works even without @AliasFor present
+			Object v = m.invoke(ann);
+			return (v instanceof String s) ? s : null;
+		} catch (NoSuchMethodException e) {
+			return null; // element not present on this annotation
+		} catch (Exception e) {
+			return null; // defensive
+		}
 	}
 }

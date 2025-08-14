@@ -11,21 +11,21 @@ import com.obsinity.telemetry.model.Lifecycle;
 
 /** Immutable, precompiled handler descriptor discovered at bootstrap. */
 public record Handler(
-		Object bean,
-		Method method,
-		String exactName,
-		Pattern namePattern,
-		BitSet lifecycleMask,
-		BitSet kindMask,
-		boolean requireThrowable,
-		List<Class<? extends Throwable>> throwableTypes,
-		boolean includeSubclasses,
-		Pattern messagePattern,
-		Class<?> causeTypeOrNull,
-		List<ParamBinder> binders,
-		Set<String> requiredAttrs,
-		String id // e.g. beanClass#method
-		) {
+	Object bean,
+	Method method,
+	String exactName,                 // exact event name match (optional)
+	String namePrefix,                // prefix-based match (optional)
+	BitSet lifecycleMask,
+	BitSet kindMask,
+	boolean requireThrowable,
+	List<Class<? extends Throwable>> throwableTypes,
+	boolean includeSubclasses,
+	Pattern messagePattern,           // still regex for message if you use it
+	Class<?> causeTypeOrNull,
+	List<ParamBinder> binders,
+	Set<String> requiredAttrs,
+	String id                         // e.g. beanClass#method
+) {
 	public boolean lifecycleAccepts(Lifecycle lc) {
 		return (lifecycleMask == null) || lifecycleMask.get(lc.ordinal());
 	}
@@ -34,9 +34,14 @@ public record Handler(
 		return (kindMask == null) || kindMask.get(kind.ordinal());
 	}
 
+	/** Name match rules (in order): exactName > namePrefix > no constraint. */
 	public boolean nameMatches(String name) {
-		if (exactName != null && !exactName.isEmpty()) return exactName.equals(name);
-		if (namePattern != null) return namePattern.matcher(name).matches();
+		if (exactName != null && !exactName.isEmpty()) {
+			return exactName.equals(name);
+		}
+		if (namePrefix != null && !namePrefix.isEmpty()) {
+			return name != null && name.startsWith(namePrefix);
+		}
 		return true; // no constraint
 	}
 }
