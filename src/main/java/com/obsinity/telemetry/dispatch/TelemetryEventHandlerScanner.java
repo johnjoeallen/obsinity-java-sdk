@@ -11,16 +11,17 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 import java.util.regex.Pattern;
 
-import com.obsinity.telemetry.annotations.BindAllContextValues;
+import com.obsinity.telemetry.annotations.PullAllContextValues;
+import com.obsinity.telemetry.annotations.PullAttribute;
+import com.obsinity.telemetry.annotations.PullContextValue;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.util.ClassUtils;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.BindContextValue;
-import com.obsinity.telemetry.annotations.BindEventAttribute;
 import com.obsinity.telemetry.annotations.BindEventThrowable;
 import com.obsinity.telemetry.annotations.OnEvent;
 import com.obsinity.telemetry.annotations.RequiredAttributes;
@@ -31,9 +32,9 @@ import com.obsinity.telemetry.model.TelemetryHolder;
 /**
  * Scans beans for @OnEvent methods, but only if the bean's user class is annotated with @TelemetryEventHandler.
  *
- * <p>Supported handler parameter binding: - @BindEventAttribute("key"): bind a single persisted attribute (required if
+ * <p>Supported handler parameter binding: - @PullAttribute("key"): bind a single persisted attribute (required if
  * the annotation says so) - @BindEventThrowable: bind the event's Throwable (SELF, CAUSE, ROOT_CAUSE)
- * - @BindContextValue("key"): bind a single ephemeral context value - @BindAllContextValues: bind the entire event
+ * - @PullContextValue("key"): bind a single ephemeral context value - @BindAllContextValues: bind the entire event
  * context map (must target Map<String,Object>) - TelemetryHolder: inject the holder - List<?> (batch): only allowed for
  * lifecycle=ROOT_FLOW_FINISHED
  */
@@ -73,7 +74,7 @@ public final class TelemetryEventHandlerScanner {
 				}
 			}
 
-			// Collect required attrs from @RequiredAttributes and any @BindEventAttribute(required=true) params
+			// Collect required attrs from @RequiredAttributes and any @PullAttribute(required=true) params
 			Set<String> requiredAttrs = new LinkedHashSet<>();
 			RequiredAttributes req = m.getAnnotation(RequiredAttributes.class);
 			if (req != null) requiredAttrs.addAll(Arrays.asList(req.value()));
@@ -82,10 +83,10 @@ public final class TelemetryEventHandlerScanner {
 			List<ParamBinder> binders = new ArrayList<>();
 			Parameter[] params = m.getParameters();
 			for (Parameter p : params) {
-				BindEventAttribute attr = p.getAnnotation(BindEventAttribute.class);
+				PullAttribute attr = p.getAnnotation(PullAttribute.class);
 				BindEventThrowable thr = p.getAnnotation(BindEventThrowable.class);
-				BindContextValue ecp = p.getAnnotation(BindContextValue.class);
-				BindAllContextValues aec = p.getAnnotation(BindAllContextValues.class);
+				PullContextValue ecp = p.getAnnotation(PullContextValue.class);
+				PullAllContextValues aec = p.getAnnotation(PullAllContextValues.class);
 
 				if (attr != null) {
 					String key = attr.name();
@@ -184,10 +185,10 @@ public final class TelemetryEventHandlerScanner {
 		return c.getName() + "." + m.getName() + Arrays.toString(m.getParameterTypes());
 	}
 
-	/** Some @BindEventAttribute versions may not declare 'required()'. Treat absent method as false. */
-	private static boolean safeRequired(BindEventAttribute attr) {
+	/** Some @PullAttribute versions may not declare 'required()'. Treat absent method as false. */
+	private static boolean safeRequired(PullAttribute attr) {
 		try {
-			return (boolean) BindEventAttribute.class.getMethod("required").invoke(attr);
+			return (boolean) PullAttribute.class.getMethod("required").invoke(attr);
 		} catch (NoSuchMethodException ignored) {
 			return false;
 		} catch (Exception e) {

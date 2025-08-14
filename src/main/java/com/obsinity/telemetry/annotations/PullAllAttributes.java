@@ -9,5 +9,5 @@
 	@Retention(RetentionPolicy.RUNTIME)
 	@Target(ElementType.PARAMETER)
 	@Documented
-	public @interface BindAllAttributes {
+	public @interface PullAllAttributes {
 	}

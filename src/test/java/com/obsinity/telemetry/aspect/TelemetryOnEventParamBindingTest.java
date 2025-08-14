@@ -25,9 +25,9 @@ import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.test.annotation.DirtiesContext;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.BindAllContextValues;
-import com.obsinity.telemetry.annotations.BindContextValue;
-import com.obsinity.telemetry.annotations.BindEventAttribute;
+import com.obsinity.telemetry.annotations.PullAllContextValues;
+import com.obsinity.telemetry.annotations.PullContextValue;
+import com.obsinity.telemetry.annotations.PullAttribute;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
 import com.obsinity.telemetry.annotations.OnEvent;
@@ -215,13 +215,13 @@ class TelemetryOnEventParamBindingTest {
 				name = "bindingFlow")
 		public void onBindingFlowFinished(
 				TelemetryHolder holder,
-				@BindEventAttribute(name = "user.id") String userId,
-				@BindEventAttribute(name = "attempt") Integer attempt,
-				@BindEventAttribute(name = "order.uuid") UUID orderUuid,
-				@BindEventAttribute(name = "meta") ComplexMeta meta,
-				@BindContextValue(name = "tenant") String tenant,
-				@BindContextValue(name = "retries") Integer retries,
-				@BindAllContextValues Map<String, Object> allCtx) {
+				@PullAttribute(name = "user.id") String userId,
+				@PullAttribute(name = "attempt") Integer attempt,
+				@PullAttribute(name = "order.uuid") UUID orderUuid,
+				@PullAttribute(name = "meta") ComplexMeta meta,
+				@PullContextValue(name = "tenant") String tenant,
+				@PullContextValue(name = "retries") Integer retries,
+				@PullAllContextValues Map<String, Object> allCtx) {
 			flowFinished.add(new FlowCapture(userId, attempt, orderUuid, meta, tenant, retries, allCtx));
 			allFinishes.add(holder);
 		}
@@ -246,9 +246,9 @@ class TelemetryOnEventParamBindingTest {
 				lifecycle = {Lifecycle.FLOW_FINISHED},
 				name = "stepWithParams")
 		public void onStepFinished(
-				@BindEventAttribute(name = "step.answer") Integer ans,
-				@BindEventAttribute(name = "step.note") String note,
-				@BindContextValue(name = "step.ctx") String sctx,
+				@PullAttribute(name = "step.answer") Integer ans,
+				@PullAttribute(name = "step.note") String note,
+				@PullContextValue(name = "step.ctx") String sctx,
 				TelemetryHolder holder) {
 			stepFinished.add(new StepCapture(ans, note, sctx, holder));
 		}

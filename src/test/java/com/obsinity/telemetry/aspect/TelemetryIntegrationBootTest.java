@@ -9,6 +9,7 @@ import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 
+import com.obsinity.telemetry.annotations.PushAttribute;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,7 +24,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.BindEventAttribute;
+import com.obsinity.telemetry.annotations.PullAttribute;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
 import com.obsinity.telemetry.annotations.OnEvent;
@@ -156,7 +157,7 @@ class TelemetryIntegrationBootTest {
 		 * (Will run only for flows that actually carry the attribute.)
 		 */
 		@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
-		public void onFinishCustomTag(@BindEventAttribute(name = "custom.tag") CustomTag customTag) {
+		public void onFinishCustomTag(@PullAttribute(name = "custom.tag") CustomTag customTag) {
 			finishCustomTags.add(customTag);
 		}
 
@@ -212,8 +213,8 @@ class TelemetryIntegrationBootTest {
 		// Example method showing how @Attribute on params would flow into OAttributes via binder
 		@Flow(name = "paramFlowExample")
 		public void paramFlowExample(
-				@BindEventAttribute(name = "user.id") String userId,
-				@BindEventAttribute(name = "flags") Map<String, Object> flags) {
+			@PushAttribute(name = "user.id") String userId,
+			@PushAttribute(name = "flags") Map<String, Object> flags) {
 			/* no-op */
 		}
 	}

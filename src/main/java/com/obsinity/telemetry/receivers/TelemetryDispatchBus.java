@@ -17,10 +17,10 @@ import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.stereotype.Component;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.BindAllAttributes;
-import com.obsinity.telemetry.annotations.BindAllContextValues;
-import com.obsinity.telemetry.annotations.BindContextValue;
-import com.obsinity.telemetry.annotations.BindEventAttribute;
+import com.obsinity.telemetry.annotations.PullAllAttributes;
+import com.obsinity.telemetry.annotations.PullAllContextValues;
+import com.obsinity.telemetry.annotations.PullAttribute;
+import com.obsinity.telemetry.annotations.PullContextValue;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.dispatch.AttrBindingException;
 import com.obsinity.telemetry.dispatch.BatchBinder;
@@ -221,9 +221,10 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 	/**
 	 * Bind params for single-holder dispatch. First tries declared ParamBinders; if a slot isn't provided by a binder,
-	 * it falls back to: - TelemetryHolder injection
-	 * - @BindEventAttribute(name="...") value from holder.attributes()
-	 * - @BindContextValue(name="...") from holder.getEventContext() (flow-scoped)
+	 * it falls back to:
+	 * - TelemetryHolder injection
+	 * - @PullAttribute/@PullAttribute(name="...") from holder.attributes()
+	 * - @PullContextValue/@PullContextValue(name="...") from holder.getEventContext() (flow-scoped)
 	 * - @BindAllContextValues Map view of holder.getEventContext()
 	 * - @BindAllAttributes Map snapshot of holder.attributes().asMap()
 	 */
@@ -256,29 +257,41 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 					val = holder;
 
 				} else {
-					// @BindEventAttribute on handler param
-					BindEventAttribute attr = p.getAnnotation(BindEventAttribute.class);
-					if (attr != null) {
-						Object raw = holder.attributes().asMap().get(attr.name());
+					// --- Attributes: prefer PullAttribute, then legacy PullAttribute
+					PullAttribute pullAttr = p.getAnnotation(PullAttribute.class);
+					if (pullAttr != null) {
+						Object raw = holder.attributes().asMap().get(pullAttr.name());
 						val = coerce(raw, p.getType());
-					}
-
-					// @BindContextValue on handler param (flow-scoped)
-					if (val == null) {
-						BindContextValue ecp = p.getAnnotation(BindContextValue.class);
-						if (ecp != null) {
-							Object raw = holder.getEventContext().get(ecp.name());
+					} else {
+						PullAttribute legacyAttr = p.getAnnotation(PullAttribute.class);
+						if (legacyAttr != null) {
+							Object raw = holder.attributes().asMap().get(legacyAttr.name());
 							val = coerce(raw, p.getType());
 						}
 					}
 
+					// --- Context values: prefer PullContextValue, then legacy PullContextValue
+					if (val == null) {
+						PullContextValue pullCtx = p.getAnnotation(PullContextValue.class);
+						if (pullCtx != null) {
+							Object raw = holder.getEventContext().get(pullCtx.name());
+							val = coerce(raw, p.getType());
+						} else {
+							PullContextValue legacyCtx = p.getAnnotation(PullContextValue.class);
+							if (legacyCtx != null) {
+								Object raw = holder.getEventContext().get(legacyCtx.name());
+								val = coerce(raw, p.getType());
+							}
+						}
+					}
+
 					// @BindAllContextValues Map view of event context (unmodifiable)
-					if (val == null && p.isAnnotationPresent(BindAllContextValues.class)) {
+					if (val == null && p.isAnnotationPresent(PullAllContextValues.class)) {
 						val = Collections.unmodifiableMap(holder.getEventContext());
 					}
 
 					// @BindAllAttributes Map snapshot of event attributes (unmodifiable)
-					if (val == null && p.isAnnotationPresent(BindAllAttributes.class)) {
+					if (val == null && p.isAnnotationPresent(PullAllAttributes.class)) {
 						val = Collections.unmodifiableMap(new LinkedHashMap<>(holder.attributes().asMap()));
 					}
 				}
@@ -291,7 +304,8 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 	/**
 	 * Bind params for batch dispatch. Supports BatchBinder, optional TelemetryHolder (root/first) injection,
-	 * @BindEventAttribute sourced from the root holder, @BindAllContextValues (root) and @BindAllAttributes (root).
+	 * PullAttribute/PullAttribute sourced from the root holder, PullContextValue/PullContextValue, and
+	 * @BindAllContextValues/@BindAllAttributes from the root holder.
 	 */
 	private static Object[] bindBatchParams(Handler h, List<TelemetryHolder> batch) {
 		List<ParamBinder> binders = h.binders();
@@ -327,15 +341,38 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				} else if (TelemetryHolder.class.isAssignableFrom(p.getType())) {
 					val = root;
 				} else {
-					BindEventAttribute attr = p.getAnnotation(BindEventAttribute.class);
-					if (attr != null) {
-						Object raw = root.attributes().asMap().get(attr.name());
+					// Attributes: PullAttribute then legacy PullAttribute
+					PullAttribute pullAttr = p.getAnnotation(PullAttribute.class);
+					if (pullAttr != null) {
+						Object raw = root.attributes().asMap().get(pullAttr.name());
 						val = coerce(raw, p.getType());
+					} else {
+						PullAttribute legacyAttr = p.getAnnotation(PullAttribute.class);
+						if (legacyAttr != null) {
+							Object raw = root.attributes().asMap().get(legacyAttr.name());
+							val = coerce(raw, p.getType());
+						}
 					}
-					if (val == null && p.isAnnotationPresent(BindAllContextValues.class)) {
+
+					// Context: PullContextValue then legacy PullContextValue
+					if (val == null) {
+						PullContextValue pullCtx = p.getAnnotation(PullContextValue.class);
+						if (pullCtx != null) {
+							Object raw = root.getEventContext().get(pullCtx.name());
+							val = coerce(raw, p.getType());
+						} else {
+							PullContextValue legacyCtx = p.getAnnotation(PullContextValue.class);
+							if (legacyCtx != null) {
+								Object raw = root.getEventContext().get(legacyCtx.name());
+								val = coerce(raw, p.getType());
+							}
+						}
+					}
+
+					if (val == null && p.isAnnotationPresent(PullAllContextValues.class)) {
 						val = Collections.unmodifiableMap(root.getEventContext());
 					}
-					if (val == null && p.isAnnotationPresent(BindAllAttributes.class)) {
+					if (val == null && p.isAnnotationPresent(PullAllAttributes.class)) {
 						val = Collections.unmodifiableMap(new LinkedHashMap<>(root.attributes().asMap()));
 					}
 				}
