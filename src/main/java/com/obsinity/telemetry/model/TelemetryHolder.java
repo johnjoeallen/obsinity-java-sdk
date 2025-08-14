@@ -73,30 +73,30 @@ public class TelemetryHolder {
 
 	/* ── Error/exception context (non-serialized) ────────────────── */
 	@JsonIgnore
-	private transient Throwable throwable; // NEW: optional throwable associated with this holder
+	private transient Throwable throwable; // optional throwable associated with this holder
 
 	/* ── Event context cursor (for nested steps) ──────────────────── */
 	private final Deque<OEvent> eventStack = new ArrayDeque<>();
 
 	/** Full constructor (validates service id consistency). */
 	public TelemetryHolder(
-			String name,
-			Instant timestamp,
-			Long timeUnixNano,
-			Instant endTimestamp,
-			String traceId,
-			String spanId,
-			String parentSpanId,
-			SpanKind kind,
-			OResource resource,
-			OAttributes attributes,
-			List<OEvent> events,
-			List<OLink> links,
-			OStatus status,
-			String serviceId,
-			String correlationId,
-			Map<String, Object> extensions,
-			Boolean synthetic) {
+		String name,
+		Instant timestamp,
+		Long timeUnixNano,
+		Instant endTimestamp,
+		String traceId,
+		String spanId,
+		String parentSpanId,
+		SpanKind kind,
+		OResource resource,
+		OAttributes attributes,
+		List<OEvent> events,
+		List<OLink> links,
+		OStatus status,
+		String serviceId,
+		String correlationId,
+		Map<String, Object> extensions,
+		Boolean synthetic) {
 		this.name = name;
 		this.timestamp = timestamp;
 		this.timeUnixNano = timeUnixNano;
@@ -230,15 +230,86 @@ public class TelemetryHolder {
 	}
 
 	/**
-	 * Returns the attribute value coerced to String, or null if not present. For numbers/booleans, uses
-	 * {@code toString()}. For other objects, also {@code toString()}.
+	 * Raw attribute access. Returns the stored value as-is, or {@code null} if absent.
+	 * Prefer this for objects and typed values.
 	 */
-	public String attr(String key) {
-		if (!hasAttr(key)) return null;
-		Object v = attributes.asMap().get(key);
+	public Object attrRaw(String key) {
+		return hasAttr(key) ? attributes.asMap().get(key) : null;
+	}
+
+	/**
+	 * Returns the attribute value as the requested type, or {@code null} if absent.
+	 * If the stored value is already an instance of {@code type}, it is returned unchanged.
+	 * Performs simple, safe conversions (String<->number/boolean). Throws IllegalArgumentException on unsupported conversions.
+	 */
+	@SuppressWarnings("unchecked")
+	public <T> T attr(String key, Class<T> type) {
+		Object v = attrRaw(key);
 		if (v == null) return null;
-		if (v instanceof String s) return s;
-		return v.toString();
+		if (type.isInstance(v)) return (T) v;
+
+		// String target
+		if (type == String.class) return (T) String.valueOf(v);
+
+		// Boolean target
+		if (type == Boolean.class || type == boolean.class) {
+			if (v instanceof Boolean b) return (T) b;
+			if (v instanceof Number n) return (T) Boolean.valueOf(n.intValue() != 0);
+			if (v instanceof String s) {
+				String ss = s.trim();
+				if ("1".equals(ss)) return (T) Boolean.TRUE;
+				if ("0".equals(ss)) return (T) Boolean.FALSE;
+				return (T) Boolean.valueOf(Boolean.parseBoolean(ss));
+			}
+			throw new IllegalArgumentException("Cannot convert " + v.getClass().getName() + " to boolean");
+		}
+
+		// Number targets
+		if (type == Integer.class || type == int.class) {
+			if (v instanceof Number n) return (T) Integer.valueOf(n.intValue());
+			if (v instanceof String s) return (T) Integer.valueOf(Integer.parseInt(s));
+		}
+		if (type == Long.class || type == long.class) {
+			if (v instanceof Number n) return (T) Long.valueOf(n.longValue());
+			if (v instanceof String s) return (T) Long.valueOf(Long.parseLong(s));
+		}
+		if (type == Double.class || type == double.class) {
+			if (v instanceof Number n) return (T) Double.valueOf(n.doubleValue());
+			if (v instanceof String s) return (T) Double.valueOf(Double.parseDouble(s));
+		}
+		if (type == Float.class || type == float.class) {
+			if (v instanceof Number n) return (T) Float.valueOf(n.floatValue());
+			if (v instanceof String s) return (T) Float.valueOf(Float.parseFloat(s));
+		}
+		if (type == Short.class || type == short.class) {
+			if (v instanceof Number n) return (T) Short.valueOf(n.shortValue());
+			if (v instanceof String s) return (T) Short.valueOf(Short.parseShort(s));
+		}
+		if (type == Byte.class || type == byte.class) {
+			if (v instanceof Number n) return (T) Byte.valueOf(n.byteValue());
+			if (v instanceof String s) return (T) Byte.valueOf(Byte.parseByte(s));
+		}
+
+		throw new IllegalArgumentException(
+			"Attribute '" + key + "' is " + v.getClass().getName() + " and cannot be converted to " + type.getName());
+	}
+
+	/**
+	 * Returns the attribute value coerced to String, or null if not present.
+	 * For numbers/booleans/other objects, uses {@code String.valueOf(v)}.
+	 */
+	public String attrAsString(String key) {
+		Object v = attrRaw(key);
+		return (v == null) ? null : String.valueOf(v);
+	}
+
+	/**
+	 * @deprecated This old helper coerced to String and is misleading when attributes hold objects.
+	 * Use {@link #attrRaw(String)}, {@link #attr(String, Class)}, or {@link #attrAsString(String)} instead.
+	 */
+	@Deprecated
+	public String attr(String key) {
+		return attrAsString(key);
 	}
 
 	/** Returns attribute as Long if possible (handles String and Number), else null. */
@@ -301,15 +372,15 @@ public class TelemetryHolder {
 	}
 
 	/**
-	 * Returns a String→String view of attributes (values coerced via {@code toString()}). The returned map is a shallow
-	 * copy and safe to expose.
+	 * Returns a String→String view of attributes (values coerced via {@code String.valueOf()}).
+	 * The returned map is a shallow copy and safe to expose.
 	 */
 	public Map<String, String> stringAttributes() {
 		Map<String, Object> src = (attributes != null ? attributes.asMap() : Map.of());
 		Map<String, String> out = new LinkedHashMap<>(src.size());
 		for (Map.Entry<String, Object> e : src.entrySet()) {
 			Object v = e.getValue();
-			out.put(e.getKey(), v == null ? null : (v instanceof String s ? s : v.toString()));
+			out.put(e.getKey(), v == null ? null : String.valueOf(v));
 		}
 		return out;
 	}
@@ -340,7 +411,7 @@ public class TelemetryHolder {
 	 * @return the newly created event (already appended)
 	 */
 	public OEvent beginStepEvent(
-			final String name, final long epochNanos, final long startNanoTime, final OAttributes initialAttrs) {
+		final String name, final long epochNanos, final long startNanoTime, final OAttributes initialAttrs) {
 		final OAttributes attrs = (initialAttrs != null) ? initialAttrs : new OAttributes(new LinkedHashMap<>());
 		final OEvent ev = new OEvent(name, epochNanos, 0L, attrs, 0, startNanoTime);
 		events().add(ev);
@@ -375,14 +446,14 @@ public class TelemetryHolder {
 		final int lastIdx = list.isEmpty() ? -1 : list.size() - 1;
 		if (lastIdx >= 0 && list.get(lastIdx) == ev) {
 			list.set(
-					lastIdx,
-					new OEvent(
-							ev.name(),
-							ev.epochNanos(),
-							endEpochNanos,
-							attrs,
-							ev.droppedAttributesCount(),
-							ev.getStartNanoTime()));
+				lastIdx,
+				new OEvent(
+					ev.name(),
+					ev.epochNanos(),
+					endEpochNanos,
+					attrs,
+					ev.droppedAttributesCount(),
+					ev.getStartNanoTime()));
 		} else {
 			// Intentionally empty: unexpected ordering (should not happen)
 		}
@@ -393,7 +464,7 @@ public class TelemetryHolder {
 		if (serviceId != null && !serviceId.isBlank()) return serviceId;
 		if (resource == null || resource.attributes() == null) return null;
 		Object v = resource.attributes().asMap().get(SERVICE_ID_ATTR);
-		return v == null ? null : v.toString();
+		return v == null ? null : String.valueOf(v);
 	}
 
 	/** Validate presence/equality of service id (top-level vs resource). */
@@ -402,15 +473,15 @@ public class TelemetryHolder {
 		String fromRes = null;
 		if (resource != null && resource.attributes() != null) {
 			Object v = resource.attributes().asMap().get(SERVICE_ID_ATTR);
-			if (v != null && !v.toString().isBlank()) fromRes = v.toString();
+			if (v != null && !String.valueOf(v).isBlank()) fromRes = String.valueOf(v);
 		}
 		if (top == null && fromRes == null) {
 			throw new IllegalArgumentException(
-					"Missing service identifier: set top-level 'serviceId' or resource.attributes[\"service.id\"]");
+				"Missing service identifier: set top-level 'serviceId' or resource.attributes[\"service.id\"]");
 		}
 		if (top != null && fromRes != null && !top.equals(fromRes)) {
 			throw new IllegalArgumentException(
-					"Conflicting service identifiers: top-level 'serviceId' != resource.attributes[\"service.id\"]");
+				"Conflicting service identifiers: top-level 'serviceId' != resource.attributes[\"service.id\"]");
 		}
 	}
 
@@ -469,8 +540,8 @@ public class TelemetryHolder {
 		public static OAttributes fromOtel(Attributes attrs) {
 			if (attrs == null) return new OAttributes(new LinkedHashMap<>());
 			Map<String, Object> m = attrs.asMap().entrySet().stream()
-					.collect(Collectors.toMap(
-							e -> e.getKey().getKey(), Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new));
+				.collect(Collectors.toMap(
+					e -> e.getKey().getKey(), Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new));
 			return new OAttributes(m);
 		}
 
@@ -487,7 +558,7 @@ public class TelemetryHolder {
 				List<String> ss = (List<String>) list;
 				b.put(AttributeKey.stringArrayKey(k), ss);
 			} else {
-				b.put(AttributeKey.stringKey(k), v.toString()); // last resort
+				b.put(AttributeKey.stringKey(k), String.valueOf(v)); // last resort
 			}
 		}
 	}
@@ -505,16 +576,16 @@ public class TelemetryHolder {
 		private final OAttributes attributes;
 		private final Integer droppedAttributesCount; // optional, contributes to total count
 
-		// NEW: monotonic start for accurate duration; not serialized
+		// monotonic start for accurate duration; not serialized
 		private final transient long startNanoTime;
 
 		public OEvent(
-				String name,
-				long epochNanos,
-				Long endEpochNanos,
-				OAttributes attributes,
-				Integer droppedAttributesCount,
-				long startNanoTime) {
+			String name,
+			long epochNanos,
+			Long endEpochNanos,
+			OAttributes attributes,
+			Integer droppedAttributesCount,
+			long startNanoTime) {
 			this.name = Objects.requireNonNull(name, "name");
 			this.epochNanos = epochNanos;
 			this.endEpochNanos = endEpochNanos;
@@ -551,7 +622,7 @@ public class TelemetryHolder {
 		public EventData toOtel() {
 			final Attributes otelAttrs = attributes.toOtel();
 			final int total =
-					(droppedAttributesCount == null ? otelAttrs.size() : otelAttrs.size() + droppedAttributesCount);
+				(droppedAttributesCount == null ? otelAttrs.size() : otelAttrs.size() + droppedAttributesCount);
 			return new EventData() {
 				@Override
 				public long getEpochNanos() {
@@ -609,9 +680,9 @@ public class TelemetryHolder {
 		public static OLink fromOtel(LinkData ld) {
 			if (ld == null) return null;
 			return new OLink(
-					ld.getSpanContext().getTraceId(),
-					ld.getSpanContext().getSpanId(),
-					OAttributes.fromOtel(ld.getAttributes()));
+				ld.getSpanContext().getTraceId(),
+				ld.getSpanContext().getSpanId(),
+				OAttributes.fromOtel(ld.getAttributes()));
 		}
 	}
 

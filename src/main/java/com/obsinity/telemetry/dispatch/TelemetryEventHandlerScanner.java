@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 import io.opentelemetry.api.trace.SpanKind;
@@ -21,7 +22,9 @@ import com.obsinity.telemetry.annotations.RequireAttrs;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
+import org.springframework.aop.support.AopUtils;
 import org.springframework.stereotype.Component;
+import org.springframework.util.ClassUtils;
 
 /**
  * Scans beans for @OnEvent methods, but only if the bean's user class is annotated with @TelemetryEventHandler.
@@ -61,9 +64,10 @@ public final class TelemetryEventHandlerScanner {
 
 			Class<?> causeType = null;
 			if (!on.causeType().isBlank()) {
+				// Use Spring's ClassUtils for resolution (no reflective Class.forName blocks)
 				try {
-					causeType = Class.forName(on.causeType(), false, userClass.getClassLoader());
-				} catch (ClassNotFoundException e) {
+					causeType = ClassUtils.resolveClassName(on.causeType(), userClass.getClassLoader());
+				} catch (IllegalArgumentException e) {
 					throw new IllegalArgumentException(
 						"@OnEvent causeType not found: " + on.causeType() + " on " + signature(userClass, m));
 				}
@@ -86,13 +90,17 @@ public final class TelemetryEventHandlerScanner {
 
 				if (a != null) {
 					requiredAttrs.add(a.value());
-					binders.add(new AttrBinder(a.value(), a.required(), TypeConverters.forType(p.getType())));
+					Function<Object, Object> objConverter =
+						o -> TypeConverters.forType(p.getType()).apply(o == null ? null : String.valueOf(o));
+					binders.add(new AttrBinder(a.value(), a.required(), objConverter, p.getType()));
 				} else if (attr != null) {
 					// Treat @Attribute(name=..., required=...) exactly like @Attr
 					String key = attr.name();
 					boolean required = safeRequired(attr);
 					if (required) requiredAttrs.add(key);
-					binders.add(new AttrBinder(key, required, TypeConverters.forType(p.getType())));
+					Function<Object, Object> objConverter =
+						o -> TypeConverters.forType(p.getType()).apply(o == null ? null : String.valueOf(o));
+					binders.add(new AttrBinder(key, required, objConverter, p.getType()));
 				} else if (err != null) {
 					boolean bindCause = "cause".equals(err.target());
 					binders.add(new ErrBinder(err.required(), bindCause));
@@ -137,34 +145,19 @@ public final class TelemetryEventHandlerScanner {
 		return out;
 	}
 
-	/** Resolve underlying class if bean is a proxy. Works with/without Spring. */
+	/**
+	 * Resolve underlying user class when running with Spring proxies.
+	 */
 	private static Class<?> resolveUserClass(Object bean) {
-		Class<?> c = bean.getClass();
-		try {
-			Class<?> aopUtils = Class.forName("org.springframework.aop.support.AopUtils");
-			boolean isAopProxy =
-				(boolean) aopUtils.getMethod("isAopProxy", Object.class).invoke(null, bean);
-			if (isAopProxy) {
-				Class<?> target = (Class<?>)
-					aopUtils.getMethod("getTargetClass", Object.class).invoke(null, bean);
-				if (target != null) return target;
-			}
-			Class<?> classUtils = Class.forName("org.springframework.util.ClassUtils");
-			Class<?> user =
-				(Class<?>) classUtils.getMethod("getUserClass", Class.class).invoke(null, c);
-			if (user != null) return user;
-		} catch (Throwable ignore) {
-			// Not using Spring or reflection failed — fall back
-		}
-		String n = c.getName();
-		int jdkProxyIdx = n.indexOf('$');
-		if (jdkProxyIdx > 0) {
-			try {
-				return Class.forName(n.substring(0, jdkProxyIdx));
-			} catch (ClassNotFoundException ignored) {
+		Class<?> candidate = (bean != null ? bean.getClass() : null);
+		if (candidate == null) return null;
+		if (AopUtils.isAopProxy(bean)) {
+			Class<?> target = AopUtils.getTargetClass(bean);
+			if (target != null) {
+				return ClassUtils.getUserClass(target);
 			}
 		}
-		return c;
+		return ClassUtils.getUserClass(candidate);
 	}
 
 	private static void validateNameSelectors(OnEvent on, Method m) {

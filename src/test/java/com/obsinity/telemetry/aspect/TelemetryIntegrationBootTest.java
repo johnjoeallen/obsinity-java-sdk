@@ -48,6 +48,9 @@ class TelemetryIntegrationBootTest {
 
 	private static final Logger log = LoggerFactory.getLogger(TelemetryIntegrationBootTest.class);
 
+	/** Example object type to store under the "custom.tag" attribute. */
+	static record CustomTag(String value) {}
+
 	@SpringBootConfiguration
 	@EnableAutoConfiguration
 	@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
@@ -101,7 +104,8 @@ class TelemetryIntegrationBootTest {
 					m.put("test.flow", opts.name());
 					m.put("declaring.class", pjp.getSignature().getDeclaringTypeName());
 					m.put("declaring.method", pjp.getSignature().getName());
-					m.put("custom.tag", "integration"); // used by @OnEvent attribute-bound param
+					// store an OBJECT, not a String
+					m.put("custom.tag", new CustomTag("integration"));
 
 					// Create OAttributes, then merge @Attribute-annotated parameters from the join point
 					TelemetryHolder.OAttributes attrs = new TelemetryHolder.OAttributes(m);
@@ -124,14 +128,14 @@ class TelemetryIntegrationBootTest {
 
 	/**
 	 * Test “receiver” implemented as an annotation-driven handler. Collects starts, finishes, root batches,
-	 * and demonstrates an @OnEvent method that takes a String sourced from flow attributes.
+	 * and demonstrates an @OnEvent method that takes an OBJECT from flow attributes.
 	 */
 	@TelemetryEventHandler
 	static class RecordingReceiver {
 		final List<TelemetryHolder> starts = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> finishes = new CopyOnWriteArrayList<>();
 		final List<List<TelemetryHolder>> rootBatches = new CopyOnWriteArrayList<>();
-		final List<String> finishCustomTags = new CopyOnWriteArrayList<>();
+		final List<CustomTag> finishCustomTags = new CopyOnWriteArrayList<>();
 
 		@OnEvent(lifecycle = {Lifecycle.FLOW_STARTED})
 		public void onStart(TelemetryHolder holder) {
@@ -144,10 +148,10 @@ class TelemetryIntegrationBootTest {
 		}
 
 		/**
-		 * Attribute-bound parameter: injects "custom.tag" string from the finished flow's attributes.
+		 * Attribute-bound parameter: injects "custom.tag" as a CustomTag object from the finished flow's attributes.
 		 */
 		@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
-		public void onFinishCustomTag(@Attribute(name = "custom.tag") String customTag) {
+		public void onFinishCustomTag(@Attribute(name = "custom.tag") CustomTag customTag) {
 			finishCustomTags.add(customTag);
 		}
 
@@ -240,8 +244,13 @@ class TelemetryIntegrationBootTest {
 		log.info("flowA attributes: {}", flowAttrs);
 		assertThat(flowAttrs)
 			.containsEntry("test.flow", "flowA")
-			.containsEntry("declaring.method", "flowA")
-			.containsEntry("custom.tag", "integration");
+			.containsEntry("declaring.method", "flowA");
+
+		// custom.tag is now an OBJECT:
+		assertThat(flowAttrs.get("custom.tag"))
+			.isInstanceOf(CustomTag.class);
+		assertThat(((CustomTag) flowAttrs.get("custom.tag")).value())
+			.isEqualTo("integration");
 
 		assertThat(finish.events()).isNotNull().isNotEmpty();
 
@@ -275,8 +284,11 @@ class TelemetryIntegrationBootTest {
 		log.info("lonelyStep attributes: {}", attrs);
 		assertThat(attrs)
 			.containsEntry("test.flow", "lonelyStep")
-			.containsEntry("declaring.method", "lonelyStep")
-			.containsEntry("custom.tag", "integration");
+			.containsEntry("declaring.method", "lonelyStep");
+
+		// custom.tag is now an OBJECT:
+		assertThat(attrs.get("custom.tag")).isInstanceOf(CustomTag.class);
+		assertThat(((CustomTag) attrs.get("custom.tag")).value()).isEqualTo("integration");
 	}
 
 	@Test
@@ -348,14 +360,15 @@ class TelemetryIntegrationBootTest {
 	}
 
 	@Test
-	@DisplayName("@OnEvent handler can take a String sourced from attributes")
-	void onEventHandlerReceivesStringFromAttributes() {
-		// Trigger any flow; buildAttributes() sets custom.tag="integration"
+	@DisplayName("@OnEvent handler can take an OBJECT sourced from attributes")
+	void onEventHandlerReceivesObjectFromAttributes() {
+		// Trigger any flow; buildAttributes() sets custom.tag=CustomTag("integration")
 		service.flowA();
 
 		assertThat(receiver.finishCustomTags)
-			.as("Expected @OnEvent(FLOW_FINISHED) to receive custom.tag as String")
-			.containsExactly("integration");
+			.as("Expected @OnEvent(FLOW_FINISHED) to receive custom.tag as CustomTag object")
+			.hasSize(1);
+		assertThat(receiver.finishCustomTags.get(0).value()).isEqualTo("integration");
 	}
 
 	/* helpers */

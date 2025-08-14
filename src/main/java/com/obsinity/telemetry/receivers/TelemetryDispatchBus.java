@@ -109,8 +109,7 @@ public class TelemetryDispatchBus
 		}
 
 		if (!any) {
-			// optional: log at trace; counting can be done by metrics layer
-			// log.trace("No handler accepted event name={} phase={}", holder.getName(), phase);
+			 log.trace("No handler accepted event name={} phase={}", holder.getName(), phase);
 		}
 	}
 
