@@ -9,8 +9,8 @@ import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.stereotype.Component;
 
-import com.obsinity.telemetry.annotations.Attribute;
-import com.obsinity.telemetry.model.TelemetryHolder;
+import com.obsinity.telemetry.annotations.BindEventAttribute;
+import com.obsinity.telemetry.model.OAttributes;
 
 @Component
 public final class AttributeParamExtractor {
@@ -19,7 +19,7 @@ public final class AttributeParamExtractor {
 	 * Copies values from @Attribute parameters into the provided OAttributes. If a parameter value is a Map<?,?>,
 	 * String-keyed entries are merged.
 	 */
-	public void extractTo(TelemetryHolder.OAttributes attrs, JoinPoint jp) {
+	public void extractTo(OAttributes attrs, JoinPoint jp) {
 		if (attrs == null || jp == null) {
 			return;
 		}
@@ -36,7 +36,7 @@ public final class AttributeParamExtractor {
 		int n = Math.min(params.length, args.length);
 
 		for (int i = 0; i < n; i++) {
-			Attribute ann = params[i].getAnnotation(Attribute.class);
+			BindEventAttribute ann = params[i].getAnnotation(BindEventAttribute.class);
 			String name = ann != null ? ann.name() : null;
 
 			if (name != null && !name.isBlank()) {

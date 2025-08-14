@@ -1,30 +1,11 @@
 package com.obsinity.telemetry.model;
 
 import java.time.Instant;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import io.opentelemetry.api.common.AttributeKey;
-import io.opentelemetry.api.common.Attributes;
-import io.opentelemetry.api.common.AttributesBuilder;
-import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
-import io.opentelemetry.api.trace.StatusCode;
-import io.opentelemetry.api.trace.TraceFlags;
-import io.opentelemetry.api.trace.TraceState;
-import io.opentelemetry.sdk.resources.Resource;
-import io.opentelemetry.sdk.trace.data.EventData;
-import io.opentelemetry.sdk.trace.data.LinkData;
-import io.opentelemetry.sdk.trace.data.StatusData;
 
 /**
  * OTEL-shaped telemetry container with Obsinity-native fields.
@@ -32,23 +13,186 @@ import io.opentelemetry.sdk.trace.data.StatusData;
  * <p><strong>Service ID requirement:</strong> You MUST provide a service identifier either at the top level
  * {@link #serviceId} or in {@code resource.attributes["service.id"]}. If both exist they must match. Use
  * {@link #effectiveServiceId()} to read the resolved value.
- *
- * <p>Wrapped (non-enum) OTEL concepts exposed via Obsinity wrappers:
- *
- * <ul>
- *   <li>{@link OResource} (wraps {@link Resource})
- *   <li>{@link OAttributes} (wraps {@link Attributes})
- *   <li>{@link OEvent} (wraps {@link EventData} + adds {@code endEpochNanos} and monotonic start)
- *   <li>{@link OLink} (wraps {@link LinkData})
- *   <li>{@link OStatus} (wraps {@link StatusData})
- * </ul>
- *
- * Enums like {@link SpanKind} and {@link StatusCode} are used directly from OTEL.
  */
 @JsonInclude(Include.NON_NULL)
 public class TelemetryHolder {
 
 	public static final String SERVICE_ID_ATTR = "service.id";
+
+	/* ========================= Embedded Builder ========================= */
+
+	/** Create a new builder for {@link TelemetryHolder}. */
+	public static Builder builder() {
+		return new Builder();
+	}
+
+	public static final class Builder {
+		private String name;
+		private Instant timestamp;
+		private Long timeUnixNano;
+		private Instant endTimestamp;
+		private String traceId;
+		private String spanId;
+		private String parentSpanId;
+		private SpanKind kind;
+		private OResource resource;
+		private OAttributes attributes = new OAttributes(new LinkedHashMap<>());
+		private List<OEvent> events = new ArrayList<>();
+		private List<OLink> links = new ArrayList<>();
+		private OStatus status;
+		private String serviceId;
+		private String correlationId;
+		private Boolean synthetic;
+		private Map<String, Object> eventContext = new LinkedHashMap<>(); // flow-scoped (non-serialized)
+
+		// step emulation metadata (non-serialized)
+		private boolean step;
+		private long startNanoTime;
+
+		private Builder() {}
+
+		public Builder name(String name) {
+			this.name = name;
+			return this;
+		}
+
+		public Builder timestamp(Instant timestamp) {
+			this.timestamp = timestamp;
+			return this;
+		}
+
+		public Builder timeUnixNano(Long timeUnixNano) {
+			this.timeUnixNano = timeUnixNano;
+			return this;
+		}
+
+		public Builder endTimestamp(Instant endTimestamp) {
+			this.endTimestamp = endTimestamp;
+			return this;
+		}
+
+		public Builder traceId(String traceId) {
+			this.traceId = traceId;
+			return this;
+		}
+
+		public Builder spanId(String spanId) {
+			this.spanId = spanId;
+			return this;
+		}
+
+		public Builder parentSpanId(String parentSpanId) {
+			this.parentSpanId = parentSpanId;
+			return this;
+		}
+
+		public Builder kind(SpanKind kind) {
+			this.kind = kind;
+			return this;
+		}
+
+		public Builder resource(OResource resource) {
+			this.resource = resource;
+			return this;
+		}
+
+		public Builder attributes(OAttributes attributes) {
+			this.attributes = attributes;
+			return this;
+		}
+
+		public Builder putAttribute(String key, Object value) {
+			this.attributes.put(key, value);
+			return this;
+		}
+
+		public Builder events(List<OEvent> events) {
+			this.events = events;
+			return this;
+		}
+
+		public Builder addEvent(OEvent event) {
+			this.events.add(event);
+			return this;
+		}
+
+		public Builder links(List<OLink> links) {
+			this.links = links;
+			return this;
+		}
+
+		public Builder addLink(OLink link) {
+			this.links.add(link);
+			return this;
+		}
+
+		public Builder status(OStatus status) {
+			this.status = status;
+			return this;
+		}
+
+		public Builder serviceId(String serviceId) {
+			this.serviceId = serviceId;
+			return this;
+		}
+
+		public Builder correlationId(String correlationId) {
+			this.correlationId = correlationId;
+			return this;
+		}
+
+		public Builder synthetic(Boolean synthetic) {
+			this.synthetic = synthetic;
+			return this;
+		}
+
+		public Builder eventContext(Map<String, Object> eventContext) {
+			this.eventContext = (eventContext != null ? eventContext : new LinkedHashMap<>());
+			return this;
+		}
+
+		public Builder putEventContext(String key, Object value) {
+			this.eventContext.put(key, value);
+			return this;
+		}
+
+		/** Mark this holder as representing a promoted step (not serialized). */
+		public Builder step(boolean step) {
+			this.step = step;
+			return this;
+		}
+		/** Set monotonic start (nanoTime) for accurate duration when folding steps (not serialized). */
+		public Builder startNanoTime(long t) {
+			this.startNanoTime = t;
+			return this;
+		}
+
+		public TelemetryHolder build() {
+			TelemetryHolder holder = new TelemetryHolder(
+					name,
+					timestamp,
+					timeUnixNano,
+					endTimestamp,
+					traceId,
+					spanId,
+					parentSpanId,
+					kind,
+					resource,
+					attributes != null ? attributes : new OAttributes(new LinkedHashMap<>()),
+					events != null ? events : new ArrayList<>(),
+					links != null ? links : new ArrayList<>(),
+					status,
+					serviceId,
+					correlationId,
+					synthetic);
+			if (eventContext != null && !eventContext.isEmpty()) {
+				holder.eventContext().putAll(eventContext);
+			}
+			holder.step = this.step;
+			holder.startNanoTime = this.startNanoTime;
+			return holder;
+		}
+	}
 
 	/* ── OTEL-ish core ───────────────────────────────────────────── */
 	private String name;
@@ -68,35 +212,46 @@ public class TelemetryHolder {
 	/* ── Obsinity-native ─────────────────────────────────────────── */
 	private String serviceId; // required here OR in resource["service.id"]
 	private String correlationId;
-	private Map<String, Object> extensions; // mutable free-form
 	private Boolean synthetic;
+
+	/* ── EventContext (flow-scoped, non-serialized) ──────────────── */
+	@JsonIgnore
+	private transient Map<String, Object> eventContext = new LinkedHashMap<>();
 
 	/* ── Error/exception context (non-serialized) ────────────────── */
 	@JsonIgnore
-	private transient Throwable throwable; // optional throwable associated with this holder
+	private transient Throwable throwable;
 
-	/* ── Event context cursor (for nested steps) ──────────────────── */
+	/* ── Event cursor for nested steps (legacy helpers) ──────────── */
+	@JsonIgnore
 	private final Deque<OEvent> eventStack = new ArrayDeque<>();
+
+	/* ── Step emulation metadata (non-serialized) ────────────────── */
+	@JsonIgnore
+	private transient boolean step; // true if this holder represents a promoted step
+
+	@JsonIgnore
+	private transient long startNanoTime; // monotonic start for accurate duration when folding
 
 	/** Full constructor (validates service id consistency). */
 	public TelemetryHolder(
-		String name,
-		Instant timestamp,
-		Long timeUnixNano,
-		Instant endTimestamp,
-		String traceId,
-		String spanId,
-		String parentSpanId,
-		SpanKind kind,
-		OResource resource,
-		OAttributes attributes,
-		List<OEvent> events,
-		List<OLink> links,
-		OStatus status,
-		String serviceId,
-		String correlationId,
-		Map<String, Object> extensions,
-		Boolean synthetic) {
+			String name,
+			Instant timestamp,
+			Long timeUnixNano,
+			Instant endTimestamp,
+			String traceId,
+			String spanId,
+			String parentSpanId,
+			SpanKind kind,
+			OResource resource,
+			OAttributes attributes,
+			List<OEvent> events,
+			List<OLink> links,
+			OStatus status,
+			String serviceId,
+			String correlationId,
+			Boolean synthetic) {
+
 		this.name = name;
 		this.timestamp = timestamp;
 		this.timeUnixNano = timeUnixNano;
@@ -106,13 +261,12 @@ public class TelemetryHolder {
 		this.parentSpanId = parentSpanId;
 		this.kind = kind;
 		this.resource = resource;
-		this.attributes = attributes != null ? attributes : new OAttributes(new LinkedHashMap<>());
-		this.events = events != null ? events : new ArrayList<>();
-		this.links = links != null ? links : new ArrayList<>();
+		this.attributes = (attributes != null ? attributes : new OAttributes(new LinkedHashMap<>()));
+		this.events = (events != null ? events : new ArrayList<>());
+		this.links = (links != null ? links : new ArrayList<>());
 		this.status = status;
 		this.serviceId = serviceId;
 		this.correlationId = correlationId;
-		this.extensions = (extensions != null ? extensions : new LinkedHashMap<>());
 		this.synthetic = synthetic;
 
 		validateServiceIdConsistency();
@@ -179,79 +333,87 @@ public class TelemetryHolder {
 		return correlationId;
 	}
 
-	public Map<String, Object> extensions() {
-		return extensions;
-	} // MUTABLE
-
 	public Boolean synthetic() {
 		return synthetic;
 	}
 
-	/* ===== Compatibility getters for dispatcher/binders (conventional style) ==== */
+	/** Flow-scoped EventContext (non-serialized). */
+	@JsonIgnore
+	public Map<String, Object> eventContext() {
+		return eventContext;
+	}
+
+	@JsonIgnore
+	public Map<String, Object> getEventContext() {
+		return eventContext;
+	}
+
+	/** Step emulation metadata (non-serialized). */
+	@JsonIgnore
+	public boolean isStep() {
+		return step;
+	}
+
+	@JsonIgnore
+	public void setStep(boolean step) {
+		this.step = step;
+	}
+
+	@JsonIgnore
+	public long getStartNanoTime() {
+		return startNanoTime;
+	}
+
+	@JsonIgnore
+	public void setStartNanoTime(long startNanoTime) {
+		this.startNanoTime = startNanoTime;
+	}
+
+	/* ===== Convenience getters for frameworks ===== */
 	public String getName() {
 		return name;
-	} // convenience
+	}
 
 	public SpanKind getSpanKind() {
 		return kind;
-	} // convenience
+	}
 
-	/* Minimal mutators we actually use from the processor */
 	public void setEndTimestamp(Instant endTimestamp) {
 		this.endTimestamp = endTimestamp;
 	}
 
 	/* ========================= Throwable helpers ========================= */
-	/** Returns the associated throwable (may be null). */
 	public Throwable throwable() {
 		return throwable;
 	}
 
-	/** Conventional accessor for frameworks. */
 	public Throwable getThrowable() {
 		return throwable;
 	}
 
-	/** Sets/overwrites the associated throwable. */
 	public void setThrowable(Throwable throwable) {
 		this.throwable = throwable;
 	}
 
-	/** @return true if a throwable is present. */
 	public boolean hasThrowable() {
 		return throwable != null;
 	}
 
 	/* ========================= Attribute convenience ========================= */
-
-	/** @return true if an attribute key is present on the span-level attributes. */
 	public boolean hasAttr(String key) {
 		return key != null && attributes != null && attributes.asMap().containsKey(key);
 	}
 
-	/**
-	 * Raw attribute access. Returns the stored value as-is, or {@code null} if absent.
-	 * Prefer this for objects and typed values.
-	 */
 	public Object attrRaw(String key) {
 		return hasAttr(key) ? attributes.asMap().get(key) : null;
 	}
 
-	/**
-	 * Returns the attribute value as the requested type, or {@code null} if absent.
-	 * If the stored value is already an instance of {@code type}, it is returned unchanged.
-	 * Performs simple, safe conversions (String<->number/boolean). Throws IllegalArgumentException on unsupported conversions.
-	 */
 	@SuppressWarnings("unchecked")
 	public <T> T attr(String key, Class<T> type) {
 		Object v = attrRaw(key);
 		if (v == null) return null;
 		if (type.isInstance(v)) return (T) v;
-
-		// String target
 		if (type == String.class) return (T) String.valueOf(v);
-
-		// Boolean target
 		if (type == Boolean.class || type == boolean.class) {
 			if (v instanceof Boolean b) return (T) b;
 			if (v instanceof Number n) return (T) Boolean.valueOf(n.intValue() != 0);
@@ -263,8 +425,6 @@ public class TelemetryHolder {
 			}
 			throw new IllegalArgumentException("Cannot convert " + v.getClass().getName() + " to boolean");
 		}
-
-		// Number targets
 		if (type == Integer.class || type == int.class) {
 			if (v instanceof Number n) return (T) Integer.valueOf(n.intValue());
 			if (v instanceof String s) return (T) Integer.valueOf(Integer.parseInt(s));
@@ -289,75 +449,56 @@ public class TelemetryHolder {
 			if (v instanceof Number n) return (T) Byte.valueOf(n.byteValue());
 			if (v instanceof String s) return (T) Byte.valueOf(Byte.parseByte(s));
 		}
-
-		throw new IllegalArgumentException(
-			"Attribute '" + key + "' is " + v.getClass().getName() + " and cannot be converted to " + type.getName());
+		throw new IllegalArgumentException("Attribute '" + key + "' is "
+				+ v.getClass().getName() + " and cannot be converted to " + type.getName());
 	}
 
-	/**
-	 * Returns the attribute value coerced to String, or null if not present.
-	 * For numbers/booleans/other objects, uses {@code String.valueOf(v)}.
-	 */
 	public String attrAsString(String key) {
 		Object v = attrRaw(key);
 		return (v == null) ? null : String.valueOf(v);
 	}
-
-	/**
-	 * @deprecated This old helper coerced to String and is misleading when attributes hold objects.
-	 * Use {@link #attrRaw(String)}, {@link #attr(String, Class)}, or {@link #attrAsString(String)} instead.
-	 */
+	/** @deprecated Prefer {@link #attrRaw(String)} / {@link #attr(String, Class)} / {@link #attrAsString(String)} */
 	@Deprecated
 	public String attr(String key) {
 		return attrAsString(key);
 	}
 
-	/** Returns attribute as Long if possible (handles String and Number), else null. */
 	public Long attrAsLong(String key) {
 		if (!hasAttr(key)) return null;
 		Object v = attributes.asMap().get(key);
 		if (v instanceof Number n) return n.longValue();
-		if (v instanceof String s) {
+		if (v instanceof String s)
 			try {
 				return Long.parseLong(s);
-			} catch (NumberFormatException e) {
-				return null;
+			} catch (NumberFormatException ignored) {
 			}
-		}
 		return null;
 	}
 
-	/** Returns attribute as Integer if possible, else null. */
 	public Integer attrAsInt(String key) {
 		if (!hasAttr(key)) return null;
 		Object v = attributes.asMap().get(key);
 		if (v instanceof Number n) return n.intValue();
-		if (v instanceof String s) {
+		if (v instanceof String s)
 			try {
 				return Integer.parseInt(s);
-			} catch (NumberFormatException e) {
-				return null;
+			} catch (NumberFormatException ignored) {
 			}
-		}
 		return null;
 	}
 
-	/** Returns attribute as Double if possible, else null. */
 	public Double attrAsDouble(String key) {
 		if (!hasAttr(key)) return null;
 		Object v = attributes.asMap().get(key);
 		if (v instanceof Number n) return n.doubleValue();
-		if (v instanceof String s) {
+		if (v instanceof String s)
 			try {
 				return Double.parseDouble(s);
-			} catch (NumberFormatException e) {
-				return null;
+			} catch (NumberFormatException ignored) {
 			}
-		}
 		return null;
 	}
 
-	/** Returns attribute as Boolean if possible, else null. Accepts "true/false", "1/0". */
 	public Boolean attrAsBoolean(String key) {
 		if (!hasAttr(key)) return null;
 		Object v = attributes.asMap().get(key);
@@ -371,10 +512,6 @@ public class TelemetryHolder {
 		return null;
 	}
 
-	/**
-	 * Returns a String→String view of attributes (values coerced via {@code String.valueOf()}).
-	 * The returned map is a shallow copy and safe to expose.
-	 */
 	public Map<String, String> stringAttributes() {
 		Map<String, Object> src = (attributes != null ? attributes.asMap() : Map.of());
 		Map<String, String> out = new LinkedHashMap<>(src.size());
@@ -385,33 +522,30 @@ public class TelemetryHolder {
 		return out;
 	}
 
-	/* ========================= Behavior ========================= */
-
-	/** Application-facing: write to the current context (top event if present, else flow attributes). */
-	public void contextPut(final String key, final Object value) {
-		if (key == null || key.isBlank()) {
-			return;
-		}
+	/* ========================= EventContext helpers ========================= */
+	public void eventContextPut(final String key, final Object value) {
+		if (key == null || key.isBlank()) return;
 		final OEvent currentEvent = eventStack.peekLast();
-		if (currentEvent != null) {
-			currentEvent.attributes().put(key, value);
-		} else {
-			attributes().put(key, value);
-		}
+		if (currentEvent != null) currentEvent.eventContext().put(key, value);
+		else eventContext().put(key, value);
 	}
 
-	/**
-	 * Processor-facing: step entry — append an event and push it on the stack so app code can
-	 * {@link #contextPut(String, Object)} into it immediately.
-	 *
-	 * @param name event name
-	 * @param epochNanos wall-clock start time (for OTEL/export)
-	 * @param startNanoTime monotonic start time (for accurate duration; not serialized)
-	 * @param initialAttrs base attributes to seed the event with (nullable)
-	 * @return the newly created event (already appended)
-	 */
+	public Object eventContextGet(final String key) {
+		final OEvent currentEvent = eventStack.peekLast();
+		return (currentEvent != null)
+				? currentEvent.eventContext().get(key)
+				: eventContext().get(key);
+	}
+
+	public boolean hasEventContextKey(final String key) {
+		final OEvent currentEvent = eventStack.peekLast();
+		if (currentEvent != null && currentEvent.eventContext().containsKey(key)) return true;
+		return eventContext().containsKey(key);
+	}
+
+	/* ========================= Legacy step lifecycle helpers ========================= */
 	public OEvent beginStepEvent(
-		final String name, final long epochNanos, final long startNanoTime, final OAttributes initialAttrs) {
+			final String name, final long epochNanos, final long startNanoTime, final OAttributes initialAttrs) {
 		final OAttributes attrs = (initialAttrs != null) ? initialAttrs : new OAttributes(new LinkedHashMap<>());
 		final OEvent ev = new OEvent(name, epochNanos, 0L, attrs, 0, startNanoTime);
 		events().add(ev);
@@ -419,23 +553,12 @@ public class TelemetryHolder {
 		return ev;
 	}
 
-	/**
-	 * Processor-facing: step exit — finalize the current event. Sets phase=finish, merges updates, sets duration from
-	 * monotonic nanos, and replaces the last list element with a copy carrying endEpochNanos.
-	 */
 	public void endStepEvent(final long endEpochNanos, final long endNanoTime, final Map<String, Object> updates) {
 		final OEvent ev = eventStack.pollLast();
-		if (ev == null) {
-			// Intentionally empty: no active event to end
-			return;
-		}
+		if (ev == null) return;
 
 		final OAttributes attrs = ev.attributes();
-		if (updates != null && !updates.isEmpty()) {
-			for (Map.Entry<String, Object> e : updates.entrySet()) {
-				attrs.put(e.getKey(), e.getValue());
-			}
-		}
+		if (updates != null && !updates.isEmpty()) updates.forEach(attrs::put);
 
 		final long start = ev.getStartNanoTime();
 		final long duration = (start > 0L && endNanoTime > 0L) ? (endNanoTime - start) : 0L;
@@ -446,20 +569,19 @@ public class TelemetryHolder {
 		final int lastIdx = list.isEmpty() ? -1 : list.size() - 1;
 		if (lastIdx >= 0 && list.get(lastIdx) == ev) {
 			list.set(
-				lastIdx,
-				new OEvent(
-					ev.name(),
-					ev.epochNanos(),
-					endEpochNanos,
-					attrs,
-					ev.droppedAttributesCount(),
-					ev.getStartNanoTime()));
-		} else {
-			// Intentionally empty: unexpected ordering (should not happen)
+					lastIdx,
+					new OEvent(
+							ev.name(),
+							ev.epochNanos(),
+							endEpochNanos,
+							attrs,
+							ev.droppedAttributesCount(),
+							ev.getStartNanoTime(),
+							ev.eventContext()));
 		}
 	}
 
-	/** Resolve service id with top-level preference, fallback to resource["service.id"]. */
+	/* ========================= Service Id ========================= */
 	public String effectiveServiceId() {
 		if (serviceId != null && !serviceId.isBlank()) return serviceId;
 		if (resource == null || resource.attributes() == null) return null;
@@ -467,7 +589,6 @@ public class TelemetryHolder {
 		return v == null ? null : String.valueOf(v);
 	}
 
-	/** Validate presence/equality of service id (top-level vs resource). */
 	private void validateServiceIdConsistency() {
 		String top = (serviceId == null || serviceId.isBlank()) ? null : serviceId;
 		String fromRes = null;
@@ -477,241 +598,11 @@ public class TelemetryHolder {
 		}
 		if (top == null && fromRes == null) {
 			throw new IllegalArgumentException(
-				"Missing service identifier: set top-level 'serviceId' or resource.attributes[\"service.id\"]");
+					"Missing service identifier: set top-level 'serviceId' or resource.attributes[\"service.id\"]");
 		}
 		if (top != null && fromRes != null && !top.equals(fromRes)) {
 			throw new IllegalArgumentException(
-				"Conflicting service identifiers: top-level 'serviceId' != resource.attributes[\"service.id\"]");
-		}
-	}
-
-	/* ========================= Wrappers ========================= */
-
-	/** Wrapper around OTEL {@link Resource}. */
-	@JsonInclude(Include.NON_NULL)
-	public static final class OResource {
-		private final OAttributes attributes;
-
-		public OResource(OAttributes attributes) {
-			this.attributes = attributes;
-		}
-
-		public OAttributes attributes() {
-			return attributes;
-		}
-
-		/* Converters */
-		public Resource toOtel() {
-			return Resource.create(attributes != null ? attributes.toOtel() : Attributes.empty());
-		}
-
-		public static OResource fromOtel(Resource r) {
-			return new OResource(OAttributes.fromOtel(r == null ? Attributes.empty() : r.getAttributes()));
-		}
-	}
-
-	/** Wrapper around OTEL {@link Attributes} with a mutable String→Object view for JSON. */
-	@JsonInclude(Include.NON_NULL)
-	public static final class OAttributes {
-		private final Map<String, Object> asMap;
-
-		public OAttributes(Map<String, Object> asMap) {
-			this.asMap = (asMap != null ? asMap : new LinkedHashMap<>());
-		}
-
-		public Map<String, Object> asMap() {
-			return asMap;
-		}
-
-		/** Put a key/value (null keys are ignored). */
-		public void put(String key, Object value) {
-			if (key != null) {
-				asMap.put(key, value);
-			}
-		}
-
-		/* Converters */
-		public Attributes toOtel() {
-			AttributesBuilder b = Attributes.builder();
-			if (asMap != null) asMap.forEach((k, v) -> putBestEffort(b, k, v));
-			return b.build();
-		}
-
-		public static OAttributes fromOtel(Attributes attrs) {
-			if (attrs == null) return new OAttributes(new LinkedHashMap<>());
-			Map<String, Object> m = attrs.asMap().entrySet().stream()
-				.collect(Collectors.toMap(
-					e -> e.getKey().getKey(), Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new));
-			return new OAttributes(m);
-		}
-
-		private static void putBestEffort(AttributesBuilder b, String k, Object v) {
-			if (v == null) return;
-			if (v instanceof String s) b.put(AttributeKey.stringKey(k), s);
-			else if (v instanceof Boolean bo) b.put(AttributeKey.booleanKey(k), bo);
-			else if (v instanceof Integer i) b.put(AttributeKey.longKey(k), i.longValue());
-			else if (v instanceof Long l) b.put(AttributeKey.longKey(k), l);
-			else if (v instanceof Float f) b.put(AttributeKey.doubleKey(k), f.doubleValue());
-			else if (v instanceof Double d) b.put(AttributeKey.doubleKey(k), d);
-			else if (v instanceof List<?> list && list.stream().allMatch(x -> x instanceof String)) {
-				@SuppressWarnings("unchecked")
-				List<String> ss = (List<String>) list;
-				b.put(AttributeKey.stringArrayKey(k), ss);
-			} else {
-				b.put(AttributeKey.stringKey(k), String.valueOf(v)); // last resort
-			}
-		}
-	}
-
-	/**
-	 * Wrapper around OTEL {@link EventData}, with extra fields: - {@code endEpochNanos} (absolute end time for
-	 * exporters) - {@code startNanoTime} (transient, monotonic for accurate duration) Use {@link #toOtel()} when you
-	 * need an OTEL-compatible view.
-	 */
-	@JsonInclude(Include.NON_NULL)
-	public static final class OEvent {
-		private final String name;
-		private final long epochNanos; // start (wall clock)
-		private final Long endEpochNanos; // end (wall clock)
-		private final OAttributes attributes;
-		private final Integer droppedAttributesCount; // optional, contributes to total count
-
-		// monotonic start for accurate duration; not serialized
-		private final transient long startNanoTime;
-
-		public OEvent(
-			String name,
-			long epochNanos,
-			Long endEpochNanos,
-			OAttributes attributes,
-			Integer droppedAttributesCount,
-			long startNanoTime) {
-			this.name = Objects.requireNonNull(name, "name");
-			this.epochNanos = epochNanos;
-			this.endEpochNanos = endEpochNanos;
-			this.attributes = attributes == null ? new OAttributes(new LinkedHashMap<>()) : attributes;
-			this.droppedAttributesCount = droppedAttributesCount;
-			this.startNanoTime = startNanoTime;
-		}
-
-		public String name() {
-			return name;
-		}
-
-		public long epochNanos() {
-			return epochNanos;
-		}
-
-		public Long endEpochNanos() {
-			return endEpochNanos;
-		}
-
-		public OAttributes attributes() {
-			return attributes;
-		}
-
-		public Integer droppedAttributesCount() {
-			return droppedAttributesCount;
-		}
-
-		public long getStartNanoTime() {
-			return startNanoTime;
-		}
-
-		/** OTEL view (no end time in the interface; exporter can still use {@link #endEpochNanos()}). */
-		public EventData toOtel() {
-			final Attributes otelAttrs = attributes.toOtel();
-			final int total =
-				(droppedAttributesCount == null ? otelAttrs.size() : otelAttrs.size() + droppedAttributesCount);
-			return new EventData() {
-				@Override
-				public long getEpochNanos() {
-					return epochNanos;
-				}
-
-				@Override
-				public String getName() {
-					return name;
-				}
-
-				@Override
-				public Attributes getAttributes() {
-					return otelAttrs;
-				}
-
-				@Override
-				public int getTotalAttributeCount() {
-					return total;
-				}
-			};
-		}
-	}
-
-	/** Wrapper around OTEL {@link LinkData}. */
-	@JsonInclude(Include.NON_NULL)
-	public static final class OLink {
-		private final String traceId;
-		private final String spanId;
-		private final OAttributes attributes;
-
-		public OLink(String traceId, String spanId, OAttributes attributes) {
-			this.traceId = Objects.requireNonNull(traceId, "traceId");
-			this.spanId = Objects.requireNonNull(spanId, "spanId");
-			this.attributes = attributes == null ? new OAttributes(new LinkedHashMap<>()) : attributes;
-		}
-
-		public String traceId() {
-			return traceId;
-		}
-
-		public String spanId() {
-			return spanId;
-		}
-
-		public OAttributes attributes() {
-			return attributes;
-		}
-
-		public LinkData toOtel() {
-			SpanContext ctx = SpanContext.create(traceId, spanId, TraceFlags.getSampled(), TraceState.getDefault());
-			return LinkData.create(ctx, attributes.toOtel());
-		}
-
-		public static OLink fromOtel(LinkData ld) {
-			if (ld == null) return null;
-			return new OLink(
-				ld.getSpanContext().getTraceId(),
-				ld.getSpanContext().getSpanId(),
-				OAttributes.fromOtel(ld.getAttributes()));
-		}
-	}
-
-	/** Wrapper around OTEL {@link StatusData}. Uses OTEL {@link StatusCode} enum directly. */
-	@JsonInclude(Include.NON_NULL)
-	public static final class OStatus {
-		private final StatusCode code;
-		private final String message;
-
-		public OStatus(StatusCode code, String message) {
-			this.code = code;
-			this.message = message;
-		}
-
-		public StatusCode code() {
-			return code;
-		}
-
-		public String message() {
-			return message;
-		}
-
-		public StatusData toOtel() {
-			return StatusData.create(code, message);
-		}
-
-		public static OStatus fromOtel(StatusData sd) {
-			if (sd == null) return null;
-			return new OStatus(sd.getStatusCode(), sd.getDescription());
+					"Conflicting service identifiers: top-level 'serviceId' != resource.attributes[\"service.id\"]");
 		}
 	}
 }

@@ -7,13 +7,18 @@ import java.util.Map;
 import java.util.Objects;
 
 import lombok.RequiredArgsConstructor;
-import org.apache.logging.log4j.spi.StandardLevel;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.Signature;
 import org.springframework.stereotype.Component;
 
+import com.obsinity.telemetry.annotations.OrphanAlert;
 import com.obsinity.telemetry.aspect.FlowOptions;
 import com.obsinity.telemetry.model.Lifecycle;
+import com.obsinity.telemetry.model.OAttributes;
+import com.obsinity.telemetry.model.OEvent;
+import com.obsinity.telemetry.model.OLink;
+import com.obsinity.telemetry.model.OResource;
+import com.obsinity.telemetry.model.OStatus;
 import com.obsinity.telemetry.model.TelemetryHolder;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 import com.obsinity.telemetry.utils.TelemetryIdGenerator;
@@ -23,49 +28,99 @@ import com.obsinity.telemetry.utils.TelemetryIdGenerator;
 @RequiredArgsConstructor
 public class TelemetryProcessor {
 
-	/** Binds attributes from JP context to a flow holder or an event. */
+	/** Binds attributes/context from the join-point to a holder. */
 	private final TelemetryAttributeBinder telemetryAttributeBinder;
-	/** Manages per-thread state (holder stack, batches) and small utilities. */
+	/** Manages per-thread state (holder stack, batches) and utilities. */
 	private final TelemetryProcessorSupport telemetryProcessorSupport;
-	/** Event dispatcher that routes to @OnEvent handlers. */
+	/** Event dispatcher routing to @OnEvent handlers. */
 	private final TelemetryDispatchBus dispatchBus;
 
 	public final Object proceed(final ProceedingJoinPoint joinPoint, final FlowOptions options) throws Throwable {
 		final boolean active = telemetryProcessorSupport.hasActiveFlow();
-		final boolean flowAnnotation = options != null && options.autoFlowLevel() == StandardLevel.OFF;
-		// Promote lone @Step to a flow if there isn't an active one.
-		final boolean startsNewFlow = flowAnnotation || !active;
+		final boolean isFlowMethod = options != null && options.isFlowMethod();
+		final boolean isStepMethod = options != null && options.isStepMethod();
+
+		// Start a new flow for @Flow OR for an orphan @Step (promotion).
+		final boolean startsNewFlow = isFlowMethod || (isStepMethod && !active);
 
 		final TelemetryHolder parent = telemetryProcessorSupport.currentHolder();
 		final boolean opensRoot = startsNewFlow && parent == null;
 
-		// Nested @Step → event (when we are not starting a flow here)
-		final boolean stepAnnotated = options != null && options.autoFlowLevel() != StandardLevel.OFF;
-		final boolean nestedStep = stepAnnotated && active && !startsNewFlow;
+		// Nested step (no promotion): @Step invoked while a flow is active.
+		final boolean nestedStep = isStepMethod && active && !startsNewFlow;
 
-		// Flow entry
+		// Orphan @Step: log prior to opening the promoted flow.
+		if (isStepMethod && !active) {
+			final OrphanAlert.Level level = (options != null && options.orphanAlertLevel() != null)
+					? options.orphanAlertLevel()
+					: OrphanAlert.Level.ERROR; // default
+			final String stepName = resolveStepName(joinPoint, options);
+			telemetryProcessorSupport.logOrphanStep(stepName, level);
+		}
+
+		// Flow entry (@Flow or promoted @Step)
 		final TelemetryHolder opened = startsNewFlow ? openFlowIfNeeded(joinPoint, options, parent, opensRoot) : null;
 
-		// Step entry (create event immediately so param binding and contextPut land on the event)
+		// Mark origin for flows or promoted steps via attributes only
+		if (startsNewFlow && opened != null) {
+			if (isStepMethod && !active) {
+				// Orphan @Step promoted to flow
+				opened.attributes().put("origin", "STEP_FLOW");
+				opened.attributes().put("step.origin", "promoted");
+				opened.attributes().put("step.name", resolveStepName(joinPoint, options));
+			} else {
+				// Regular @Flow
+				opened.attributes().put("origin", "FLOW");
+			}
+		}
+
+		// Step entry: create a temporary step-holder so handlers/binders behave like flows; fold later into parent.
 		if (nestedStep) {
-			final TelemetryHolder curr = telemetryProcessorSupport.currentHolder();
-			if (curr != null) {
+			final TelemetryHolder currParent = telemetryProcessorSupport.currentHolder();
+			if (currParent != null) {
 				final Instant now = Instant.now();
 				final long epochStart = telemetryProcessorSupport.unixNanos(now);
-				final long startNanoTime = System.nanoTime();
+				final long monoStart = System.nanoTime();
 
 				final Signature sig = joinPoint.getSignature();
 				final Map<String, Object> base = new LinkedHashMap<>();
 				base.put("class", sig.getDeclaringTypeName());
 				base.put("method", sig.getName());
 
-				final TelemetryHolder.OEvent ev = curr.beginStepEvent(
-						resolveStepName(joinPoint, options),
-						epochStart,
-						startNanoTime,
-						new TelemetryHolder.OAttributes(base));
-				// Enrich from @Attribute params (event already exists)
-				telemetryAttributeBinder.bind(ev, joinPoint);
+				final String stepName = resolveStepName(joinPoint, options);
+
+				final TelemetryHolder stepHolder = TelemetryHolder.builder()
+						.name(stepName)
+						.timestamp(now)
+						.timeUnixNano(epochStart)
+						.traceId(currParent.traceId())
+						.spanId(TelemetryIdGenerator.hex64lsb(TelemetryIdGenerator.generate()))
+						.parentSpanId(currParent.spanId())
+						.kind(options.spanKind())
+						.resource(buildResource()) // same service.id/name as flows
+						.attributes(new OAttributes(base))
+						.events(new java.util.ArrayList<>())
+						.links(new java.util.ArrayList<>())
+						.status(buildStatus())
+						.serviceId(resolveServiceId())
+						.correlationId(
+								currParent.correlationId() != null ? currParent.correlationId() : currParent.traceId())
+						.synthetic(Boolean.FALSE)
+						.step(true) // nested temporary step-holder (will be folded into parent)
+						.startNanoTime(monoStart) // use for accurate duration on fold
+						.build();
+
+				// Mark origin via attributes
+				stepHolder.attributes().put("origin", "FLOW_STEP");
+				stepHolder.attributes().put("step.origin", "nested");
+				stepHolder.attributes().put("step.name", stepName);
+
+				// Enrich from method params onto the step-holder (so handlers see them)
+				telemetryAttributeBinder.bind(stepHolder, joinPoint);
+
+				// Make it current and notify handlers (behaves like a real flow)
+				telemetryProcessorSupport.push(stepHolder);
+				onFlowStarted(stepHolder, currParent, options); // guarded to avoid batching for steps
 			}
 		}
 
@@ -76,14 +131,14 @@ public class TelemetryProcessor {
 			final Object result = joinPoint.proceed();
 
 			if (nestedStep) {
-				finalizeCurrentEvent(null);
+				finalizeStepAsEvent(null);
 			}
 
 			telemetryProcessorSupport.safe(() -> onSuccess(telemetryProcessorSupport.currentHolder(), result, options));
 			return result;
 		} catch (final Throwable t) {
 			if (nestedStep) {
-				finalizeCurrentEvent(t);
+				finalizeStepAsEvent(t);
 			}
 			telemetryProcessorSupport.safe(() -> onError(telemetryProcessorSupport.currentHolder(), t, options));
 			throw t;
@@ -129,7 +184,7 @@ public class TelemetryProcessor {
 						joinPoint, options, parent, traceId, spanId, parentSpanId, correlationId, now, epochNanos),
 				"createFlowHolder() must not return null when starting a flow");
 
-		// Bind @Attribute params to the flow itself (baseline attributes).
+		// Bind method params to the flow (baseline attributes/context).
 		telemetryAttributeBinder.bind(opened, joinPoint);
 
 		if (opensRoot) {
@@ -175,25 +230,60 @@ public class TelemetryProcessor {
 		return joinPoint.getSignature().getName();
 	}
 
-	private void finalizeCurrentEvent(final Throwable errorOrNull) {
-		final TelemetryHolder curr = telemetryProcessorSupport.currentHolder();
-		if (curr == null) {
+	/**
+	 * Finish a temporary step-holder: dispatch FLOW_FINISHED to handlers, fold into the parent as an OEvent, then
+	 * discard the step-holder (no batching).
+	 */
+	private void finalizeStepAsEvent(final Throwable errorOrNull) {
+		final TelemetryHolder stepHolder = telemetryProcessorSupport.currentHolder();
+		if (stepHolder == null || !stepHolder.isStep()) {
 			return;
 		}
+
 		final Instant now = Instant.now();
 		final long epochEnd = telemetryProcessorSupport.unixNanos(now);
-		final long endNanoTime = System.nanoTime();
+		final long monoEnd = System.nanoTime();
 
-		final Map<String, Object> updates = new LinkedHashMap<>();
+		// decorate step attributes with result/error
 		if (errorOrNull == null) {
-			updates.put("result", "success");
+			stepHolder.attributes().put("result", "success");
 		} else {
-			updates.put("result", "error");
-			updates.put("error.type", errorOrNull.getClass().getName());
-			updates.put("error.message", String.valueOf(errorOrNull.getMessage()));
+			stepHolder.attributes().put("result", "error");
+			stepHolder.attributes().put("error.type", errorOrNull.getClass().getName());
+			stepHolder.attributes().put("error.message", String.valueOf(errorOrNull.getMessage()));
+			stepHolder.setThrowable(errorOrNull);
+		}
+		stepHolder.setEndTimestamp(now);
+
+		// Notify handlers that this "flow-like step" has finished
+		dispatchBus.dispatch(Lifecycle.FLOW_FINISHED, stepHolder);
+
+		// Fold into parent
+		final TelemetryHolder parent = telemetryProcessorSupport.currentHolderBelowTop();
+		if (parent != null) {
+			final long duration = (stepHolder.getStartNanoTime() > 0L) ? (monoEnd - stepHolder.getStartNanoTime()) : 0L;
+			stepHolder.attributes().put("duration.nanos", duration);
+			stepHolder.attributes().put("phase", "finish");
+
+			final long epochStart = stepHolder.timeUnixNano() != null
+					? stepHolder.timeUnixNano()
+					: telemetryProcessorSupport.unixNanos(stepHolder.timestamp());
+
+			final OEvent folded = new OEvent(
+					stepHolder.name(),
+					epochStart,
+					epochEnd,
+					stepHolder.attributes(),
+					0,
+					stepHolder.getStartNanoTime(),
+					stepHolder.getEventContext() // carry ephemeral step context into the event (still non-serialized)
+					);
+
+			parent.events().add(folded);
 		}
 
-		curr.endStepEvent(epochEnd, endNanoTime, updates);
+		// Discard: do not batch step holders
+		telemetryProcessorSupport.pop(stepHolder);
 	}
 
 	/* ===================== overridable building blocks (documented) ===================== */
@@ -209,54 +299,52 @@ public class TelemetryProcessor {
 			final Instant ts,
 			final long tsNanos) {
 
-		final TelemetryHolder.OResource resource = buildResource();
-		final TelemetryHolder.OAttributes attributes = buildAttributes(pjp, opts);
-		final List<TelemetryHolder.OEvent> events = buildEvents();
-		final List<TelemetryHolder.OLink> links = buildLinks();
-		final TelemetryHolder.OStatus status = buildStatus();
-		final Map<String, Object> extensions = new LinkedHashMap<>();
+		final OResource resource = buildResource();
+		final OAttributes attributes = buildAttributes(pjp, opts);
+		final List<OEvent> events = buildEvents();
+		final List<OLink> links = buildLinks();
+		final OStatus status = buildStatus();
 
-		return new TelemetryHolder(
-				/* name      */ opts.name(),
-				/* timestamp */ ts,
-				/* timeUnix  */ tsNanos,
-				/* endTime   */ null,
-				/* traceId   */ traceId,
-				/* spanId    */ spanId,
-				/* parentId  */ parentSpanId,
-				/* kind      */ opts.spanKind(),
-				/* resource  */ resource,
-				/* attrs     */ attributes,
-				/* events    */ events,
-				/* links     */ links,
-				/* status    */ status,
-				/* serviceId */ resolveServiceId(),
-				/* corrId    */ correlationId,
-				/* ext       */ extensions,
-				/* synthetic */ Boolean.FALSE);
+		return TelemetryHolder.builder()
+				.name(opts.name())
+				.timestamp(ts)
+				.timeUnixNano(tsNanos)
+				.traceId(traceId)
+				.spanId(spanId)
+				.parentSpanId(parentSpanId)
+				.kind(opts.spanKind())
+				.resource(resource)
+				.attributes(attributes != null ? attributes : new OAttributes(new LinkedHashMap<>()))
+				.events(events)
+				.links(links)
+				.status(status)
+				.serviceId(resolveServiceId())
+				.correlationId(correlationId)
+				.synthetic(Boolean.FALSE)
+				.build();
 	}
 
-	protected TelemetryHolder.OResource buildResource() {
+	protected OResource buildResource() {
 		final String sid = resolveServiceId();
 		final Map<String, Object> resAttrs = new LinkedHashMap<>();
 		resAttrs.put("service.name", sid);
 		resAttrs.put("service.id", sid);
-		return new TelemetryHolder.OResource(new TelemetryHolder.OAttributes(resAttrs));
+		return new OResource(new OAttributes(resAttrs));
 	}
 
-	protected TelemetryHolder.OAttributes buildAttributes(final ProceedingJoinPoint pjp, final FlowOptions opts) {
-		return new TelemetryHolder.OAttributes(new LinkedHashMap<>());
+	protected OAttributes buildAttributes(final ProceedingJoinPoint pjp, final FlowOptions opts) {
+		return new OAttributes(new LinkedHashMap<>());
 	}
 
-	protected List<TelemetryHolder.OEvent> buildEvents() {
+	protected List<OEvent> buildEvents() {
 		return new java.util.ArrayList<>();
 	}
 
-	protected List<TelemetryHolder.OLink> buildLinks() {
+	protected List<OLink> buildLinks() {
 		return new java.util.ArrayList<>();
 	}
 
-	protected TelemetryHolder.OStatus buildStatus() {
+	protected OStatus buildStatus() {
 		return null;
 	}
 
@@ -266,20 +354,23 @@ public class TelemetryProcessor {
 
 	/* ===================== lifecycle hooks (dispatch via bus) ===================== */
 
-	/** Flow just started: add to batch and dispatch START. */
+	/** Flow just started: add to batch (if root/flow) and dispatch START. */
 	protected void onFlowStarted(
 			final TelemetryHolder opened, final TelemetryHolder parent, final FlowOptions options) {
-		telemetryProcessorSupport.addToBatch(opened);
+		// Do NOT add step-holders to batch
+		if (opened != null && !opened.isStep()) {
+			telemetryProcessorSupport.addToBatch(opened);
+		}
 		dispatchBus.dispatch(Lifecycle.FLOW_STARTED, opened);
 	}
 
-	/** Flow is finishing now: set end time and dispatch FINISH. */
+	/** Flow is finishing now: set end time and dispatch FINISH. (Not used for step-holders.) */
 	protected void onFlowFinishing(final TelemetryHolder opened, final FlowOptions options) {
 		telemetryProcessorSupport.setEndTime(opened, Instant.now());
 		dispatchBus.dispatch(Lifecycle.FLOW_FINISHED, opened);
 	}
 
-	/** Root flow finished: dispatch the whole batch en-masse. */
+	/** Root flow finished: dispatch the whole batch en masse. */
 	protected void onRootFlowFinished(final List<TelemetryHolder> batch, final FlowOptions options) {
 		dispatchBus.dispatchRootFinished(batch);
 	}

@@ -6,32 +6,31 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import com.obsinity.telemetry.model.Lifecycle;
+import com.obsinity.telemetry.annotations.OrphanAlert;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /**
- * Thread-local flow context + batching helpers. Now uses TelemetryEventDispatcher to notify annotation-based handlers.
+ * Thread-local flow context + batching helpers. (Dispatching is handled by TelemetryDispatchBus in TelemetryProcessor.)
  */
 @Component
 public class TelemetryProcessorSupport {
 
-	/** Dispatcher that delivers events to @OnEvent handlers. */
-	private final TelemetryEventDispatcher dispatcher;
+	private static final Logger log = LoggerFactory.getLogger(TelemetryProcessorSupport.class);
 
-	/** Per-thread stack of active flows (top = current). */
+	/** Per-thread stack of active flows/holders (top = current). */
 	private final InheritableThreadLocal<Deque<TelemetryHolder>> ctx;
 
 	/**
-	 * Per-thread, per-root in-order list of finished {@link TelemetryHolder}s. Created when the root opens; appended to
-	 * on each flow finish; emitted and cleared at root exit.
+	 * Per-thread, per-root in-order list of completed {@link TelemetryHolder}s. Created when the root opens; appended
+	 * to on flow start (for batching), emitted and cleared at root exit.
 	 */
 	private final InheritableThreadLocal<List<TelemetryHolder>> batch;
 
-	public TelemetryProcessorSupport(TelemetryEventDispatcher dispatcher) {
-		this.dispatcher = dispatcher;
-
+	public TelemetryProcessorSupport() {
 		this.ctx = new InheritableThreadLocal<>() {
 			@Override
 			protected Deque<TelemetryHolder> initialValue() {
@@ -53,12 +52,21 @@ public class TelemetryProcessorSupport {
 		return d.isEmpty() ? null : d.peekLast();
 	}
 
+	/** Returns the holder just below the current top (the parent), or null if none. */
+	TelemetryHolder currentHolderBelowTop() {
+		final Deque<TelemetryHolder> d = ctx.get();
+		if (d.size() < 2) return null;
+		final var it = d.descendingIterator();
+		it.next(); // skip top
+		return it.next(); // parent
+	}
+
 	boolean hasActiveFlow() {
 		return !ctx.get().isEmpty();
 	}
 
 	void push(final TelemetryHolder h) {
-		ctx.get().addLast(h);
+		if (h != null) ctx.get().addLast(h);
 	}
 
 	void pop(final TelemetryHolder expectedTop) {
@@ -79,36 +87,15 @@ public class TelemetryProcessorSupport {
 		batch.set(new ArrayList<>());
 	}
 
-	void addToBatch(final TelemetryHolder finished) {
+	void addToBatch(final TelemetryHolder holder) {
 		final List<TelemetryHolder> list = batch.get();
-		if (list != null && finished != null) list.add(finished);
+		if (list != null && holder != null) list.add(holder);
 	}
 
 	List<TelemetryHolder> finishBatchAndGet() {
 		final List<TelemetryHolder> out = batch.get();
 		batch.remove(); // clean slate for the next root
 		return out;
-	}
-
-	/* --------------------- handler notifications (via dispatcher) --------------------- */
-
-	void notifyFlowStarted(final TelemetryHolder holder) {
-		if (holder == null) return;
-		safe(() -> dispatcher.dispatch(Lifecycle.FLOW_STARTED, holder));
-	}
-
-	void notifyFlowFinished(final TelemetryHolder holder) {
-		if (holder == null) return;
-		safe(() -> dispatcher.dispatch(Lifecycle.FLOW_FINISHED, holder));
-	}
-
-	/**
-	 * Notify end-of-root with the in-order list of completed holders. Your dispatcher can either: - expose a dedicated
-	 * method (as shown), or - emit a synthetic event with Lifecycle.ROOT_FLOW_FINISHED.
-	 */
-	void notifyRootFlowFinished(final List<TelemetryHolder> batchList) {
-		if (batchList == null || batchList.isEmpty()) return;
-		safe(() -> dispatcher.dispatchRootFinished(batchList));
 	}
 
 	/* --------------------- mutation helpers --------------------- */
@@ -135,17 +122,19 @@ public class TelemetryProcessorSupport {
 		}
 	}
 
-	/* --------------------- Dispatcher contract --------------------- */
+	/* --------------------- orphan step logging --------------------- */
 
 	/**
-	 * Minimal dispatcher contract used by this support class. Implementations should route to @OnEvent handlers
-	 * discovered by the scanner.
+	 * Log that a @Step executed with no active Flow and is being promoted. Default level is ERROR if {@code level} is
+	 * null.
 	 */
-	public interface TelemetryEventDispatcher {
-		void dispatch(Lifecycle phase, TelemetryHolder holder);
-		/** Root completion hook; keep for batching use-cases. */
-		default void dispatchRootFinished(List<TelemetryHolder> completed) {
-			/* no-op by default */
+	void logOrphanStep(final String stepName, final OrphanAlert.Level level) {
+		final OrphanAlert.Level lvl = (level != null ? level : OrphanAlert.Level.ERROR);
+		switch (lvl) {
+			case ERROR -> log.error("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
+			case WARN -> log.warn("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
+			case INFO -> log.info("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
+			case DEBUG -> log.debug("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
 		}
 	}
 }

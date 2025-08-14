@@ -4,7 +4,6 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
 
-import org.apache.logging.log4j.spi.StandardLevel;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.aop.support.AopUtils;
@@ -12,11 +11,19 @@ import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.util.ReflectionUtils;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.AutoFlow;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
+import com.obsinity.telemetry.annotations.OrphanAlert;
 import com.obsinity.telemetry.annotations.Step;
 
+/**
+ * Builds {@link FlowOptions} from method annotations.
+ *
+ * <ul>
+ *   <li>{@code @Flow} → FlowType.FLOW, orphanAlertLevel = null
+ *   <li>{@code @Step} → FlowType.STEP, orphanAlertLevel = level from {@code @OrphanAlert} if present (else ERROR)
+ * </ul>
+ */
 public final class FlowOptionsFactory {
 
 	private FlowOptionsFactory() {}
@@ -28,15 +35,16 @@ public final class FlowOptionsFactory {
 
 		Flow flow = AnnotatedElementUtils.findMergedAnnotation(method, Flow.class);
 		if (flow != null) {
-			return new FlowOptions(FlowType.FLOW, flow.name(), StandardLevel.OFF, spanKind);
+			// Regular @Flow – no orphan semantics on the method itself
+			return new FlowOptions(FlowType.FLOW, flow.name(), /*orphanAlertLevel*/ null, spanKind);
 		}
 
 		Step step = AnnotatedElementUtils.findMergedAnnotation(method, Step.class);
 		if (step != null) {
-			AutoFlow auto = AnnotatedElementUtils.findMergedAnnotation(method, AutoFlow.class);
-			StandardLevel level = (auto != null) ? auto.level() : StandardLevel.ERROR;
-			FlowType type = (auto != null) ? FlowType.AUTOFLOW : FlowType.STEP;
-			return new FlowOptions(type, step.name(), level, spanKind);
+			// @Step – promotion (orphan) behavior is controlled by optional @OrphanAlert
+			OrphanAlert orphan = AnnotatedElementUtils.findMergedAnnotation(method, OrphanAlert.class);
+			OrphanAlert.Level level = (orphan != null) ? orphan.level() : OrphanAlert.Level.ERROR;
+			return new FlowOptions(FlowType.STEP, step.name(), level, spanKind);
 		}
 
 		throw new IllegalArgumentException("Method lacks @Flow or @Step: " + method);

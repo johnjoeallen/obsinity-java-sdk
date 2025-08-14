@@ -16,7 +16,8 @@ public final class AttributeValueBinder implements ParamBinder {
 	@Override
 	public Object bind(TelemetryHolder holder) {
 		if (holder == null) return null;
-		Object raw = holder.attributes() == null ? null : holder.attributes().asMap().get(key);
+		Object raw =
+				holder.attributes() == null ? null : holder.attributes().asMap().get(key);
 		return coerce(raw, targetType);
 	}
 

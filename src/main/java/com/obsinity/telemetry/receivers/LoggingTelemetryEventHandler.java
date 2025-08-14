@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.obsinity.telemetry.annotations.OnEvent;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.model.Lifecycle;
+import com.obsinity.telemetry.model.OEvent;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /**
@@ -57,7 +58,7 @@ public class LoggingTelemetryEventHandler {
 	public void onFlowFinished(TelemetryHolder h) {
 		if (h == null) return;
 
-		final List<TelemetryHolder.OEvent> events = (h.events() != null) ? h.events() : List.of();
+		final List<OEvent> events = (h.events() != null) ? h.events() : List.of();
 
 		log.info(
 				"obsinity flow-finish name={} kind={} traceId={} spanId={} parentSpanId={} serviceId={} correlationId={} events={}",
@@ -71,7 +72,7 @@ public class LoggingTelemetryEventHandler {
 				events.size());
 
 		// One line per event (INFO)
-		for (TelemetryHolder.OEvent e : events) {
+		for (OEvent e : events) {
 			Long durationMillis = durationMillis(e.epochNanos(), e.endEpochNanos());
 			int attrCount = (e.attributes() != null && e.attributes().asMap() != null)
 					? e.attributes().asMap().size()

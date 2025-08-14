@@ -1,8 +1,7 @@
 package com.obsinity.telemetry.aspect;
 
-/** Which annotation triggered the advice. */
+/** Indicates whether the intercepted method carried @Flow or @Step. */
 public enum FlowType {
 	FLOW,
-	STEP,
-	AUTOFLOW
+	STEP
 }

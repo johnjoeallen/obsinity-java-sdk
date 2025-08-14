@@ -17,10 +17,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
-import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
@@ -90,36 +89,41 @@ class TelemetryAspectParameterizedTest {
 		}
 	}
 
-	@TestConfiguration
+	@Configuration
 	@EnableAspectJAutoProxy(exposeProxy = true, proxyTargetClass = true)
-	@Import(TelemetryAspect.class)
 	static class TestConfig {
 		@Bean
 		TelemetryAspectTestService telemetryAspectTestService() {
 			return new TelemetryAspectTestService();
+		}
+
+		// Single TelemetryAspect bean for the spy; TelemetryProcessor comes from @MockitoBean.
+		@Bean
+		TelemetryAspect telemetryAspect(TelemetryProcessor telemetryProcessor) {
+			return new TelemetryAspect(telemetryProcessor);
 		}
 	}
 
 	/** Methods under test; exposed only as a @Bean, not via component scan. */
 	static class TelemetryAspectTestService {
 
-		@Flow(name = "doFlow" /*, description = "Root flow method"*/)
+		@Flow(name = "doFlow")
 		public String doFlow() {
 			return "ok";
 		}
 
-		@Step(name = "doStep" /*, description = "Simple step inside active flow"*/)
+		@Step(name = "doStep")
 		public String doStep() {
 			return "ok";
 		}
 
-		@Step(name = "doStep" /*, description = "Step that can auto-start a flow if none active"*/)
+		@Step(name = "doStep")
 		@AutoFlow
 		public String doStepAutoFlow() {
 			return "ok";
 		}
 
-		@Step(name = "doStep" /*, description = "AutoFlow with WARN level"*/)
+		@Step(name = "doStep")
 		@AutoFlow(level = StandardLevel.WARN)
 		public String doStepAutoFlowWWarn() {
 			return "ok";

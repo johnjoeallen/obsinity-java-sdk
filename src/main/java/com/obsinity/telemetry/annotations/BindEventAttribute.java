@@ -6,12 +6,11 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** Bind a Throwable (or its cause) to a method parameter. */
+/** Marks a method parameter whose value should be recorded as a telemetry attribute. */
+@Documented
 @Target(ElementType.PARAMETER)
 @Retention(RetentionPolicy.RUNTIME)
-@Documented
-public @interface Err {
-	boolean required() default false;
-	/** "self" (default) or "cause" */
-	String target() default "self";
+public @interface BindEventAttribute {
+	/** The attribute name to record on the TelemetryHolder. */
+	String name();
 }

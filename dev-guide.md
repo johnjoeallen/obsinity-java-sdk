@@ -1,20 +1,21 @@
 # Obsinity Telemetry Developer Guide
 
 **Annotations:**
-`@Flow`, `@Step`, `@Kind`, `@PromotionAlert`, `@Attr`, `@AllAttrs`, `@Err`, `@RequireAttrs`, `@OnEvent`, `@TelemetryEventHandler`
+`@Flow`, `@Step`, `@Kind`, `@OrphanAlert`,
+`@BindEventAttribute`, `@BindContextValue`, `@BindAllContextValues`, `@BindEventThrowable`,
+`@RequiredAttributes`, `@RequiredEventContext`,
+`@OnEvent`, `@TelemetryEventHandler`
 
 This guide explains:
 
 * How to instrument code using Obsinity’s annotations.
-* How **Step promotion** works.
-* How to bind method parameters to telemetry attributes.
-* How to set attributes programmatically via `TelemetryContext`.
+* How **Step auto‑promotion** works when no active Flow exists.
+* How to bind method parameters to **persisted attributes**, **ephemeral context values**, and **errors**.
+* How to set values programmatically via `TelemetryContext`.
 * How to plug in custom event handlers using `@OnEvent` filtering.
-* **Attribute lifecycle** from event creation to storage.
+* **Attribute & context lifecycles**.
 * Which annotations control **selection** vs **binding**.
 * Failure & logging policy for handler invocations.
-
-It is designed for developers who want rich, **OpenTelemetry‑aligned** instrumentation with minimal boilerplate.
 
 ---
 
@@ -24,10 +25,11 @@ It is designed for developers who want rich, **OpenTelemetry‑aligned** instrum
 | --------------------- | ------------------------------------------------------------------------------------------------------- |
 | **Flow event**        | Top‑level telemetry unit for a logical operation (e.g., `checkout.process`).                            |
 | **Child event**       | Event emitted by a `@Step` inside an active Flow.                                                       |
-| **Promotion**         | When a `@Step` is called with **no active Flow**, it’s promoted to a Flow event.                        |
-| **Promotion warning** | Log message emitted at promotion; level controlled by `@PromotionAlert`.                                |
-| **Attributes**        | Key/value pairs attached to the current telemetry event.                                                |
-| **Telemetry Context** | API for adding attributes to the active telemetry scope.                                                |
+| **Auto‑promotion**    | When a `@Step` is called with **no active Flow**, it’s promoted to a Flow event.                        |
+| **Orphan alert**      | Log emitted on auto‑promotion; level controlled by `@OrphanAlert` (default `ERROR`).                    |
+| **Attributes**        | Persisted key/value pairs recorded on the event.                                                        |
+| **Event Context**     | Ephemeral, in‑process key/value pairs **not** serialized or stored.                                     |
+| **Telemetry Context** | API for adding attributes or context values to the active telemetry scope.                              |
 | **Event handler**     | Method annotated with `@OnEvent` that receives telemetry events filtered by lifecycle, name, kind, etc. |
 
 ---
@@ -36,7 +38,7 @@ It is designed for developers who want rich, **OpenTelemetry‑aligned** instrum
 
 ### Naming via Constants (recommended)
 
-Define event names and common regexes once as `public static final String` constants. Reference them from both **producers** (`@Flow`, `@Step`) and **consumers** (`@OnEvent`) to avoid drift.
+Define event names/regexes once and share across producers/consumers:
 
 ```java
 public final class TelemetryNames {
@@ -58,121 +60,113 @@ Starts a **Flow event** and activates context so nested `@Step` calls become chi
 ```java
 import static com.example.telemetry.TelemetryNames.*;
 
-@Kind(spanKind = SpanKind.SERVER)
+@Kind(SpanKind.SERVER)
 public class OrderService {
 
-    @Flow(name = EVENT_CHECKOUT_PROCESS)
-    public Receipt checkout(@Attr("order.id") String orderId,
-                            @Attr("order.total") BigDecimal total) {
-        validate(orderId, total);
-        charge(orderId, total);
-        persist(orderId);
-        return new Receipt();
-    }
+  @Flow(name = EVENT_CHECKOUT_PROCESS)
+  public Receipt checkout(
+      @BindEventAttribute("order.id") String orderId,
+      @BindEventAttribute("order.total") BigDecimal total) {
 
-    @Step(name = STEP_CHECKOUT_VALIDATE)
-    public void validate(@Attr("order.id") String orderId,
-                         @Attr("order.total") BigDecimal total) { /* ... */ }
-
-    @Step(name = STEP_CHECKOUT_CHARGE)
-    @Kind(spanKind = SpanKind.CLIENT)
-    public void charge(@Attr("order.id") String orderId,
-                       @Attr("payment.method") String method) { /* ... */ }
-
-    @Step(name = STEP_CHECKOUT_PERSIST)
-    public void persist(@Attr("order.id") String orderId) { /* ... */ }
-}
+    validate(orderId, total);
+    charge(orderId, total);
+    persist(orderId);
+    return new Receipt();
+  }
 ```
 
 ### `@Step`
 
-Represents a unit of work within a Flow; **promoted** to a Flow if no active Flow. You can tune the promotion log level:
+Represents a unit of work within a Flow; **auto‑promoted** to a Flow if no active Flow exists.
 
 ```java
-@Step(name = TelemetryNames.STEP_CHECKOUT_VALIDATE)
-@PromotionAlert(level = java.util.logging.Level.WARNING)
-public void validate(@Attr("order.id") String orderId,
-                     @Attr("order.total") BigDecimal total) { /* ... */ }
+  @Step(name = STEP_CHECKOUT_VALIDATE)
+  @OrphanAlert(level = OrphanAlert.Level.WARN) // log WARN when promoted
+  public void validate(
+      @BindEventAttribute("order.id") String orderId,
+      @BindEventAttribute("order.total") BigDecimal total) { /* ... */ }
+
+  @Step(name = STEP_CHECKOUT_CHARGE)
+  @Kind(SpanKind.CLIENT)
+  public void charge(
+      @BindEventAttribute("order.id") String orderId,
+      @BindEventAttribute("payment.method") String method) { /* ... */ }
+
+  @Step(name = STEP_CHECKOUT_PERSIST)
+  public void persist(@BindEventAttribute("order.id") String orderId) { /* ... */ }
+}
 ```
+
+### `@OrphanAlert`
+
+Controls the log level when a `@Step` is invoked without an active `@Flow` and is **auto‑promoted**.
+Levels: `ERROR` (default), `WARN`, `INFO`, `DEBUG`.
 
 ### `@Kind`
 
-Sets OTEL `SpanKind` (SERVER, CLIENT, PRODUCER, CONSUMER, INTERNAL) on class or method.
-
-### `@Attr`, `@AllAttrs`, `@Err`
-
-* `@Attr("key")` — bind a single attribute to the parameter type (converted when invoked).
-* `@AllAttrs` — bind the full attribute map (`Map<String,Object>`).
-* `@Err` — bind the throwable/cause associated with the event (if any).
-
-> **Note:** `@Attr` is **binding‑only** and does not control whether a handler is selected. Use `@RequireAttrs` for selection by attribute presence.
+Sets OTEL `SpanKind` (SERVER, CLIENT, PRODUCER, CONSUMER, INTERNAL) at class or method level.
 
 ---
 
-## Selection vs Binding Annotations
+## Binding vs Selection
 
-**Selection** controls whether a handler is invoked:
+**Selection** determines whether a handler runs.
+**Binding** determines what values are injected into its parameters.
 
-| Annotation / Property         | Purpose                                                          |
-| ----------------------------- | ---------------------------------------------------------------- |
-| `@OnEvent.lifecycle`          | Match specific lifecycles (omit to match all).                   |
-| `@OnEvent.name` / `nameRegex` | Exact or regex event name filter (both blank → match all names). |
-| `@OnEvent.kinds`              | Match OTEL `SpanKind`s.                                          |
-| `@OnEvent.throwableTypes`     | Match error/exception types.                                     |
-| `@OnEvent.requireThrowable`   | Require an error to be present.                                  |
-| `@OnEvent.includeSubclasses`  | Include subclasses of `throwableTypes`.                          |
-| `@OnEvent.causeType`          | Match cause by fully qualified class name.                       |
-| `@RequireAttrs`               | Require that specific attributes exist.                          |
+### Selection (on `@OnEvent` and helpers)
 
-**Binding** controls what parameters get injected after selection:
+* `name` **or** `nameRegex`
+* `lifecycle` (array of `Lifecycle`)
+* `kinds` (array of `SpanKind`)
+* Throwable filters: `requireThrowable`, `throwableTypes`, `includeSubclasses`, `messageRegex`, `causeType`
+* `@RequiredAttributes({"key1","key2"})`
+* `@RequiredEventContext({"key1","key2"})`
 
-| Annotation / Param Type | Purpose                                                                 |
-| ----------------------- | ----------------------------------------------------------------------- |
-| `@Attr("key")`          | Inject a single attribute (converted to parameter type).                |
-| `@AllAttrs`             | Inject the entire attribute map.                                        |
-| `@Err`                  | Inject the error/cause.                                                 |
-| `TelemetryHolder`       | Inject the current event.                                               |
-| `List<TelemetryHolder>` | Inject the batch for `ROOT_FLOW_FINISHED` (no extra annotation needed). |
+### Binding (parameter annotations / types)
 
-**Name filters across lifecycles:** `name` / `nameRegex` can be used with any lifecycle selection. Omit `lifecycle` to match **all** lifecycles. Omit `name`/**and** `nameRegex` to match **all** names.
+* `@BindEventAttribute("key")` → persisted attribute
+* `@BindContextValue("key")` → ephemeral context value
+* `@BindAllContextValues` → full context map (`Map<String,Object>`, read‑only)
+* `@BindEventThrowable` → event’s `Throwable` (or cause)
+* `TelemetryHolder` → current event
+* `List<TelemetryHolder>` → batch for `ROOT_FLOW_FINISHED`
 
 ---
 
-## Programmatic Attribute Setting
-
-When you need to add attributes after method entry:
+## Programmatic Attribute & Context Setting
 
 ```java
 @Service
 @RequiredArgsConstructor
 class PaymentService {
-    private final TelemetryContext telemetry;
+  private final TelemetryContext telemetry;
 
-    @Step(name = TelemetryNames.STEP_CHECKOUT_CHARGE)
-    public void charge(String userId, long amountCents) {
-        telemetry.put("user.id", userId);
-        telemetry.put("amount.cents", amountCents);
-        // ...
-    }
+  @Step(name = TelemetryNames.STEP_CHECKOUT_CHARGE)
+  public void charge(String userId, long amountCents) {
+    telemetry.putAttribute("user.id", userId);          // persisted
+    telemetry.putAttribute("amount.cents", amountCents);// persisted
+    telemetry.putContextValue("retry", false);          // ephemeral
+  }
 }
 ```
 
 ---
 
-## Attribute Lifecycle
+## Attribute & Context Lifecycle
 
 ```
 @Flow/@Step entry
   ↓
-Bind @Attr / @AllAttrs / @Err parameters
-  ↓
-(Optional) TelemetryContext.put(...)
-  ↓
-Merge into TelemetryHolder
+(Optional) telemetry.putAttribute(...) / telemetry.putContextValue(...)
   ↓
 Emit event
   ↓
-Serialize → @OnEvent handlers → Export/Store
+@OnEvent handlers selected (name/regex, lifecycle, kinds, throwable filters,
+RequiredAttributes, RequiredEventContext)
+  ↓
+Bind parameters (@BindEventAttribute, @BindContextValue, @BindAllContextValues, @BindEventThrowable, ...)
+  ↓
+Persisted attributes serialized/exported; context values are ephemeral and discarded at scope end
 ```
 
 ---
@@ -188,66 +182,20 @@ import static com.example.telemetry.TelemetryNames.*;
 @Component
 public class CheckoutEventHandlers {
 
-    /** Event name constant for the checkout process root flow. */
-    public static final String CHECKOUT = EVENT_CHECKOUT_PROCESS;
+  // Root flow completion with nested flows aggregation
+  @OnEvent(lifecycle = {Lifecycle.ROOT_FLOW_FINISHED}, name = EVENT_CHECKOUT_PROCESS)
+  public void rootDone(List<TelemetryHolder> flows) { /* … */ }
 
-    /**
-     * Handles completion of the root flow {@link #CHECKOUT} and all its nested flows.
-     *
-     * <p><strong>Selection:</strong></p>
-     * <ul>
-     *   <li>Lifecycle: {@link Lifecycle#ROOT_FLOW_FINISHED}</li>
-     *   <li>Event name: exact match {@link #CHECKOUT}</li>
-     *   <li>Kind: any</li>
-     * </ul>
-     *
-     * <p><strong>Binding:</strong></p>
-     * <ul>
-     *   <li>Single parameter of type {@code List<TelemetryHolder>} containing the root flow and all nested flows.</li>
-     *   <li>Each holder has {@code endTimestamp} set.</li>
-     * </ul>
-     */
-    @OnEvent(lifecycle = {Lifecycle.ROOT_FLOW_FINISHED}, name = CHECKOUT)
-    public void rootDone(List<TelemetryHolder> flows) { /* … */ }
+  // Any FLOW_FINISHED event with an order.id attribute present
+  @OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
+  @RequiredAttributes({"order.id"})
+  public void finished(@BindEventAttribute("order.id") String orderId, TelemetryHolder holder) { /* … */ }
 
-    /**
-     * Handles completion of any flow, regardless of name.
-     *
-     * <p><strong>Selection:</strong></p>
-     * <ul>
-     *   <li>Lifecycle: {@link Lifecycle#FLOW_FINISHED}</li>
-     *   <li>No name or regex filter → matches all event names.</li>
-     * </ul>
-     *
-     * <p><strong>Binding:</strong></p>
-     * <ul>
-     *   <li>{@code @Attr("order.id")} binds the {@code order.id} attribute value (may be {@code null}).</li>
-     *   <li>{@code TelemetryHolder} binds the full event object.</li>
-     * </ul>
-     */
-    @OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
-    public void finished(@Attr("order.id") String orderId, TelemetryHolder holder) { /* … */ }
-
-    /**
-     * Handles server-kind finished flows and inspects all attributes.
-     *
-     * <p><strong>Selection:</strong></p>
-     * <ul>
-     *   <li>Lifecycle: {@link Lifecycle#FLOW_FINISHED}</li>
-     *   <li>Kind: {@link SpanKind#SERVER}</li>
-     * </ul>
-     *
-     * <p><strong>Binding:</strong></p>
-     * <ul>
-     *   <li>{@code @AllAttrs} binds the complete attribute map.</li>
-     * </ul>
-     */
-    @OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED}, kinds = {SpanKind.SERVER})
-    public void serverOnly(@AllAttrs Map<String, Object> attrs) { /* … */ }
+  // SERVER kind finished flows; inspect all context values
+  @OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED}, kinds = {SpanKind.SERVER})
+  public void serverOnly(@BindAllContextValues Map<String, Object> ctx) { /* … */ }
 }
 ```
-
----
 
 ### Example 2 — Advanced handler class
 
@@ -258,116 +206,42 @@ import static com.example.telemetry.TelemetryNames.*;
 @Component
 public class AdvancedEventHandlers {
 
-    /** Exact event name for inventory reservation. */
-    public static final String INVENTORY_RESERVE = EVENT_INVENTORY_RESERVE;
+  // Any lifecycle for a specific event name
+  @OnEvent(name = EVENT_INVENTORY_RESERVE)
+  public void anyLifecycleForInventory(TelemetryHolder holder) { /* … */ }
 
-    /** Regex for all payment-related operations. */
-    public static final String PAYMENT_PREFIX_RE = REGEX_PAYMENT_PREFIX;
+  // Client-kind finished flows whose names start with payment.
+  @OnEvent(
+    lifecycle = {Lifecycle.FLOW_FINISHED},
+    kinds = {SpanKind.CLIENT},
+    nameRegex = REGEX_PAYMENT_PREFIX
+  )
+  public void clientPayments(
+      @BindEventAttribute("payment.id") String paymentId,
+      @BindEventAttribute("amount") BigDecimal amount,
+      TelemetryHolder holder) { /* … */ }
 
-    /**
-     * Handles any lifecycle for the event {@link #INVENTORY_RESERVE}.
-     *
-     * <p><strong>Selection:</strong></p>
-     * <ul>
-     *   <li>Event name: exact match {@link #INVENTORY_RESERVE}</li>
-     *   <li>Lifecycle: any (not specified)</li>
-     * </ul>
-     *
-     * <p><strong>Binding:</strong></p>
-     * <ul>
-     *   <li>{@code TelemetryHolder} for the matched event.</li>
-     * </ul>
-     */
-    @OnEvent(name = INVENTORY_RESERVE)
-    public void anyLifecycleForInventory(TelemetryHolder holder) { /* … */ }
+  // IO failures only (Throwable required and type-matched)
+  @OnEvent(
+    requireThrowable = true,
+    throwableTypes = { java.io.IOException.class },
+    includeSubclasses = true
+  )
+  public void ioFailures(@BindEventThrowable Throwable cause, TelemetryHolder holder) { /* … */ }
 
-    /**
-     * Handles client-kind finished flows whose names start with {@link #PAYMENT_PREFIX_RE}.
-     *
-     * <p><strong>Selection:</strong></p>
-     * <ul>
-     *   <li>Lifecycle: {@link Lifecycle#FLOW_FINISHED}</li>
-     *   <li>Kind: {@link SpanKind#CLIENT}</li>
-     *   <li>Name regex: {@link #PAYMENT_PREFIX_RE}</li>
-     * </ul>
-     *
-     * <p><strong>Binding:</strong></p>
-     * <ul>
-     *   <li>{@code @Attr("payment.id")} binds the payment ID attribute.</li>
-     *   <li>{@code @Attr("amount")} binds the amount attribute.</li>
-     *   <li>{@code TelemetryHolder} binds the full event.</li>
-     * </ul>
-     */
-    @OnEvent(
-        lifecycle = {Lifecycle.FLOW_FINISHED},
-        kinds = {SpanKind.CLIENT},
-        nameRegex = PAYMENT_PREFIX_RE
-    )
-    public void clientPayments(@Attr("payment.id") String paymentId,
-                               @Attr("amount") BigDecimal amount,
-                               TelemetryHolder holder) { /* … */ }
+  // Multi-tenant completion: require both tenant.id and region, plus a correlationId context value
+  @OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
+  @RequiredAttributes({"tenant.id", "region"})
+  @RequiredEventContext({"correlationId"})
+  public void multiTenantFinish(
+      @BindEventAttribute("tenant.id") String tenantId,
+      @BindEventAttribute("region") String region,
+      @BindContextValue("correlationId") String correlationId,
+      TelemetryHolder holder) { /* … */ }
 
-    /**
-     * Handles events with an IO-related error (IOException or subclass).
-     *
-     * <p><strong>Selection:</strong></p>
-     * <ul>
-     *   <li>Require throwable: {@code true}</li>
-     *   <li>Throwable types: {@code IOException.class}</li>
-     *   <li>Include subclasses: {@code true}</li>
-     * </ul>
-     *
-     * <p><strong>Binding:</strong></p>
-     * <ul>
-     *   <li>{@code @Err} binds the throwable cause.</li>
-     *   <li>{@code TelemetryHolder} binds the full event.</li>
-     * </ul>
-     */
-    @OnEvent(
-        requireThrowable = true,
-        throwableTypes = { java.io.IOException.class },
-        includeSubclasses = true
-    )
-    public void ioFailures(@Err Throwable cause, TelemetryHolder holder) { /* … */ }
-
-    /**
-     * Handles multi-tenant finished flows where both tenant ID and region are present.
-     *
-     * <p><strong>Selection:</strong></p>
-     * <ul>
-     *   <li>Lifecycle: {@link Lifecycle#FLOW_FINISHED}</li>
-     *   <li>Required attributes: {@code tenant.id}, {@code region}</li>
-     * </ul>
-     *
-     * <p><strong>Binding:</strong></p>
-     * <ul>
-     *   <li>{@code @Attr("tenant.id")} binds tenant ID.</li>
-     *   <li>{@code @Attr("region")} binds region.</li>
-     *   <li>{@code TelemetryHolder} binds the full event.</li>
-     * </ul>
-     */
-    @OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
-    @RequireAttrs({"tenant.id", "region"})
-    public void multiTenantFinish(@Attr("tenant.id") String tenantId,
-                                  @Attr("region") String region,
-                                  TelemetryHolder holder) { /* … */ }
-
-    /**
-     * Aggregates all completed flows for any root flow (no name filter).
-     *
-     * <p><strong>Selection:</strong></p>
-     * <ul>
-     *   <li>Lifecycle: {@link Lifecycle#ROOT_FLOW_FINISHED}</li>
-     *   <li>No name filter → all roots match.</li>
-     * </ul>
-     *
-     * <p><strong>Binding:</strong></p>
-     * <ul>
-     *   <li>{@code List<TelemetryHolder>} contains the root flow and all nested flows for that root.</li>
-     * </ul>
-     */
-    @OnEvent(lifecycle = {Lifecycle.ROOT_FLOW_FINISHED})
-    public void allRoots(List<TelemetryHolder> completed) { /* … */ }
+  // Aggregate all flows (no root name filter)
+  @OnEvent(lifecycle = {Lifecycle.ROOT_FLOW_FINISHED})
+  public void allRoots(List<TelemetryHolder> completed) { /* … */ }
 }
 ```
 
@@ -375,15 +249,14 @@ public class AdvancedEventHandlers {
 
 ## Handler Failure & Logging Policy
 
-* The **dispatcher MUST NOT crash** or abort event delivery when a handler throws.
-* Failures are **caught** and **logged** with rich context:
+* The dispatcher **must not** abort event delivery when a handler throws.
+* Failures are **caught and logged** with rich context:
 
   * `handler.class`, `handler.method`
   * `event.name`, `event.lifecycle`, `span.kind`
-  * For binding errors: `attr.key`, `value.class`, `target.type`
-* Dispatch **continues to the next matched handler** for the same event.
-* Generic type mismatches (e.g., `Map<String,Integer>` → parameter `Map<String,String>`) may fail at runtime and will be **logged**.
-* `@Attr` is **binding‑only**; use `@RequireAttrs` (or `@Attr(required=true)` if you’ve wired it to affect selection) to control invocation by attribute presence.
+  * Binding errors: key, value class, target parameter type
+* Dispatch continues to other matched handlers.
+* If a required binding (e.g., `@BindContextValue(required=true)`) is missing, log a binding error.
 
 ---
 
@@ -397,36 +270,22 @@ public class AdvancedEventHandlers {
 | **CONSUMER** | **Receives/processes** a brokered message         | Kafka poll loop; RabbitMQ listener; SQS handler                       |
 | **INTERNAL** | Performs **in‑process** work (no remote boundary) | Cache computation; rule evaluation; CPU‑bound step inside a job       |
 
-**Rules of thumb:**
-Incoming boundary → `SERVER`. Outgoing dependency → `CLIENT`. Async send/receive → `PRODUCER`/`CONSUMER`. Everything else → `INTERNAL`.
+**Rules of thumb:** incoming boundary → `SERVER`; outgoing dependency → `CLIENT`; async send/receive → `PRODUCER`/`CONSUMER`; everything else → `INTERNAL`.
 
 ---
 
-## Best Practices
+## Cheat‑Sheet: Common `@OnEvent` Patterns
 
-* **Use constants** for event names and regexes; reference them from both producers and handlers.
-* **Name consistently** using OTEL‑style lowercase dotted paths.
-* Prefer **exact names** for high‑traffic ops; use **regex** sparingly.
-* Use **`@RequireAttrs`** for presence checks; keep **`@Attr`** for binding.
-* Keep handlers **small and focused**; compose multiple targeted handlers rather than one catch‑all.
-* For `ROOT_FLOW_FINISHED`, declare **`List<TelemetryHolder>`** directly (no extra annotation).
-
----
-
-## 📌 `@OnEvent` Patterns Cheat-Sheet
-
-| Pattern                             | `@OnEvent` Example                                                               | Selection Effect                        | Binding Example                      |
-| ----------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------ |
-| **Match any event, any lifecycle**  | `@OnEvent`                                                                       | All events will invoke handler          | `TelemetryHolder holder`             |
-| **Match by exact name**             | `@OnEvent(name = EVENT_CHECKOUT_PROCESS)`                                        | Only events with that exact name        | `TelemetryHolder holder`             |
-| **Match by regex name**             | `@OnEvent(nameRegex = "^payment\\.")`                                            | Any event name starting with `payment.` | `@Attr("payment.id") String id`      |
-| **Match by lifecycle only**         | `@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})`                                | All events with that lifecycle          | `TelemetryHolder holder`             |
-| **Match by lifecycle + exact name** | `@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED}, name = EVENT_CHECKOUT_PROCESS)` | Specific event in specific lifecycle    | `@AllAttrs Map<String,Object> attrs` |
-| **Match by lifecycle + regex**      | `@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED}, nameRegex = "^checkout\\.")`    | Any checkout.\* event in FLOW\_FINISHED | `TelemetryHolder holder`             |
-| **Match by `SpanKind`**             | `@OnEvent(kinds = {SpanKind.SERVER})`                                            | Only SERVER-kind events                 | `@AllAttrs Map<String,Object> attrs` |
-| **Require attributes**              | `@OnEvent @RequireAttrs({"tenant.id", "region"})`                                | Only events with both attrs present     | `@Attr("tenant.id") String tenant`   |
-| **Require throwable**               | `@OnEvent(requireThrowable = true)`                                              | Only events with an error               | `@Err Throwable cause`               |
-| **Throwable type filter**           | `@OnEvent(throwableTypes = {IOException.class}, includeSubclasses = true)`       | Error must be `IOException` or subclass | `@Err Throwable cause`               |
-| **Batch for ROOT\_FLOW\_FINISHED**  | `@OnEvent(lifecycle = {Lifecycle.ROOT_FLOW_FINISHED})`                           | All flows under each root flow          | `List<TelemetryHolder> flows`        |
-
----
+| Pattern                            | `@OnEvent` Example                                                               | Selection Effect                     | Binding Example                                  |
+| ---------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------ |
+| **Match any event, any lifecycle** | `@OnEvent`                                                                       | All events                           | `TelemetryHolder holder`                         |
+| **Match by exact name**            | `@OnEvent(name = EVENT_CHECKOUT_PROCESS)`                                        | Only that exact name                 | `TelemetryHolder holder`                         |
+| **Match by regex name**            | `@OnEvent(nameRegex = "^payment\\.")`                                            | Any name starting with `payment.`    | `@BindEventAttribute("payment.id") String id`    |
+| **Match by lifecycle only**        | `@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})`                                | All finished flows                   | `TelemetryHolder holder`                         |
+| **Lifecycle + exact name**         | `@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED}, name = EVENT_CHECKOUT_PROCESS)` | Specific event in specific lifecycle | `@BindContextValue("debugMode") Boolean d`       |
+| **Lifecycle + kind**               | `@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED}, kinds = {SpanKind.SERVER})`     | Finished server spans                | `@BindAllContextValues Map<String,Object> ctx`   |
+| **Require attributes**             | `@OnEvent @RequiredAttributes({"tenant.id","region"})`                           | Only if both attrs present           | `@BindEventAttribute("tenant.id") String tenant` |
+| **Require event context**          | `@OnEvent @RequiredEventContext({"correlationId"})`                              | Only if context key present          | `@BindContextValue("correlationId") String cid`  |
+| **Require throwable**              | `@OnEvent(requireThrowable = true)`                                              | Only if an error is attached         | `@BindEventThrowable Throwable cause`            |
+| **Throwable type filter**          | `@OnEvent(throwableTypes = {IOException.class}, includeSubclasses = true)`       | IOException or subclass              | `@BindEventThrowable Throwable t`                |
+| **Batch for ROOT\_FLOW\_FINISHED** | `@OnEvent(lifecycle = {Lifecycle.ROOT_FLOW_FINISHED})`                           | Root + all nested flows per root     | `List<TelemetryHolder> flows`                    |
