@@ -23,6 +23,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
 import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.annotations.BindEventThrowable;
+import com.obsinity.telemetry.annotations.DispatchMode;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
 import com.obsinity.telemetry.annotations.OnEvent;
@@ -131,10 +133,7 @@ class TelemetryIntegrationBootTest {
 		}
 	}
 
-	/**
-	 * Test “receiver” implemented as an annotation-driven handler. Collects starts, finishes, root batches, and
-	 * demonstrates an @OnEvent method that takes an OBJECT from flow attributes.
-	 */
+	/** Test receiver implemented as an annotation-driven handler. */
 	@TelemetryEventHandler
 	static class RecordingReceiver {
 		final List<TelemetryHolder> starts = new CopyOnWriteArrayList<>();
@@ -142,12 +141,16 @@ class TelemetryIntegrationBootTest {
 		final List<List<TelemetryHolder>> rootBatches = new CopyOnWriteArrayList<>();
 		final List<CustomTag> finishCustomTags = new CopyOnWriteArrayList<>();
 
-		@OnEvent(lifecycle = {Lifecycle.FLOW_STARTED})
+		@OnEvent(
+				lifecycle = {Lifecycle.FLOW_STARTED},
+				mode = DispatchMode.ALWAYS)
 		public void onStart(TelemetryHolder holder) {
 			starts.add(holder);
 		}
 
-		@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
+		@OnEvent(
+				lifecycle = {Lifecycle.FLOW_FINISHED},
+				mode = DispatchMode.ALWAYS)
 		public void onFinish(TelemetryHolder holder) {
 			finishes.add(holder);
 		}
@@ -156,14 +159,24 @@ class TelemetryIntegrationBootTest {
 		 * Attribute-bound parameter: injects "custom.tag" as a CustomTag object from the finished flow's attributes.
 		 * (Will run only for flows that actually carry the attribute.)
 		 */
-		@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
+		@OnEvent(
+				lifecycle = {Lifecycle.FLOW_FINISHED},
+				mode = DispatchMode.ALWAYS)
 		public void onFinishCustomTag(@PullAttribute(name = "custom.tag") CustomTag customTag) {
 			finishCustomTags.add(customTag);
 		}
 
-		@OnEvent(lifecycle = {Lifecycle.ROOT_FLOW_FINISHED})
+		@OnEvent(
+				lifecycle = {Lifecycle.ROOT_FLOW_FINISHED},
+				mode = DispatchMode.ALWAYS)
 		public void onRoot(List<TelemetryHolder> batch) {
 			rootBatches.add(batch);
+		}
+
+		/* ===== Catch‑all ERROR handler to satisfy strict validation for selector name:* ===== */
+		@OnEvent(mode = DispatchMode.ERROR)
+		public void onAnyError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
+			// optional logging:
 		}
 	}
 

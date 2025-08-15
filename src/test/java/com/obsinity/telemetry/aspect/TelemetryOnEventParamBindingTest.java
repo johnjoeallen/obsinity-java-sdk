@@ -25,6 +25,8 @@ import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.test.annotation.DirtiesContext;
 
 import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.annotations.BindEventThrowable;
+import com.obsinity.telemetry.annotations.DispatchMode;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
 import com.obsinity.telemetry.annotations.OnEvent;
@@ -52,8 +54,6 @@ import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class TelemetryOnEventParamBindingTest {
 
-	private static final Logger log = LoggerFactory.getLogger(TelemetryOnEventParamBindingTest.class);
-
 	/* ===== Sample complex object carried as an attribute ===== */
 	static record ComplexMeta(String ref, int weight) {}
 
@@ -71,7 +71,6 @@ class TelemetryOnEventParamBindingTest {
 			return new TelemetryAttributeBinder(extractor);
 		}
 
-		// Match current TelemetryProcessorSupport (no-args)
 		@Bean
 		TelemetryProcessorSupport telemetryProcessorSupport() {
 			return new TelemetryProcessorSupport();
@@ -200,19 +199,24 @@ class TelemetryOnEventParamBindingTest {
 		final List<TelemetryHolder> starts = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> finishes = new CopyOnWriteArrayList<>();
 
-		@OnEvent(lifecycle = {Lifecycle.FLOW_STARTED})
+		@OnEvent(
+				lifecycle = {Lifecycle.FLOW_STARTED},
+				mode = DispatchMode.ALWAYS)
 		public void onStart(TelemetryHolder holder) {
 			starts.add(holder);
 		}
 
-		@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
+		@OnEvent(
+				lifecycle = {Lifecycle.FLOW_FINISHED},
+				mode = DispatchMode.ALWAYS)
 		public void onFinish(TelemetryHolder holder) {
 			finishes.add(holder);
 		}
 
 		@OnEvent(
 				lifecycle = {Lifecycle.FLOW_FINISHED},
-				name = "bindingFlow")
+				name = "bindingFlow",
+				mode = DispatchMode.ALWAYS)
 		public void onBindingFlowFinished(
 				TelemetryHolder holder,
 				@PullAttribute(name = "user.id") String userId,
@@ -244,13 +248,39 @@ class TelemetryOnEventParamBindingTest {
 
 		@OnEvent(
 				lifecycle = {Lifecycle.FLOW_FINISHED},
-				name = "stepWithParams")
+				name = "stepWithParams",
+				mode = DispatchMode.ALWAYS)
 		public void onStepFinished(
 				@PullAttribute(name = "step.answer") Integer ans,
 				@PullAttribute(name = "step.note") String note,
 				@PullContextValue(name = "step.ctx") String sctx,
 				TelemetryHolder holder) {
 			stepFinished.add(new StepCapture(ans, note, sctx, holder));
+		}
+
+		/* ===== Catch‑all ERROR handlers to satisfy strict validation ===== */
+
+		// Wildcard selector (covers handlers with no name/prefix)
+		@OnEvent(mode = DispatchMode.ERROR)
+		public void onAnyError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
+			// no-op; present to satisfy strict error coverage for name:*
+		}
+
+		// Named selectors used in this test
+		@OnEvent(
+				name = "bindingFlow",
+				lifecycle = {Lifecycle.FLOW_FINISHED},
+				mode = DispatchMode.ERROR)
+		public void onBindingFlowError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
+			// no-op; present to satisfy strict error coverage for name:bindingFlow
+		}
+
+		@OnEvent(
+				name = "stepWithParams",
+				lifecycle = {Lifecycle.FLOW_FINISHED},
+				mode = DispatchMode.ERROR)
+		public void onStepWithParamsError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
+			// no-op; present to satisfy strict error coverage for name:stepWithParams
 		}
 	}
 

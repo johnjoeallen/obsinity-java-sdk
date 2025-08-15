@@ -35,18 +35,20 @@ import com.obsinity.telemetry.model.TelemetryHolder;
 /**
  * Event dispatcher that routes TelemetryHolder instances to @OnEvent methods declared on beans annotated
  * with @TelemetryEventHandler.
+ *
+ * <p><b>Exception dispatch semantics:</b> If {@code holder.getThrowable() != null}, the dispatcher invokes exactly one
+ * ERROR handler (the most specific match) and does <b>not</b> invoke NORMAL handlers. ALWAYS handlers still run. When
+ * no exception is present, NORMAL and ALWAYS handlers run.
  */
 @Component
 public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 	private static final Logger log = LoggerFactory.getLogger(TelemetryDispatchBus.class);
 
-	private final TelemetryEventHandlerScanner scanner;
 	private final List<Handler> handlers;
 	private final Map<Lifecycle, List<Handler>> byLifecycle;
 
 	public TelemetryDispatchBus(ListableBeanFactory beanFactory, TelemetryEventHandlerScanner scanner) {
-		this.scanner = scanner;
 		// Find only beans marked with @TelemetryEventHandler
 		Collection<Object> candidateBeans =
 				beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
@@ -69,13 +71,46 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		List<Handler> candidates = byLifecycle.getOrDefault(phase, List.of());
 		if (candidates.isEmpty()) return;
 
+		final Throwable t = holder.getThrowable();
+
+		// ==== Exception present → single-dispatch to ERROR handler; ALWAYS also runs ====
+		if (t != null) {
+			Handler best = selectBestErrorHandler(candidates, holder, phase, t);
+			if (best != null) {
+				invokeHandler(best, holder, phase);
+			} else {
+				log.warn("Unhandled exception for event name={} phase={} ex={}", holder.getName(), phase, t.toString());
+			}
+
+			// Run ALWAYS handlers (side-effect-safe), but never NORMAL in error path
+			for (Handler h : candidates) {
+				if (!h.isAlwaysMode()) continue;
+				if (!h.kindAccepts(nullToInternal(holder.getSpanKind()))) continue;
+				if (!h.nameMatches(holder.getName())) continue;
+				if (!throwableFiltersAccept(h, t)) continue;
+				// required attributes
+				if (!h.requiredAttrs().isEmpty()) {
+					List<String> missing = missingAttrs(holder, h.requiredAttrs());
+					if (!missing.isEmpty()) {
+						logMissing(h, holder, phase, missing);
+						continue;
+					}
+				}
+				invokeHandler(h, holder, phase);
+			}
+			return; // do NOT run NORMAL handlers
+		}
+
+		// ==== Normal path (no exception) → run NORMAL + ALWAYS ====
 		boolean any = false;
 		for (Handler h : candidates) {
+			if (!(h.isNormalMode() || h.isAlwaysMode())) continue; // skip ERROR handlers
 			if (!h.kindAccepts(nullToInternal(holder.getSpanKind()))) continue;
 			if (!h.nameMatches(holder.getName())) continue;
-			if (!throwableMatches(h, holder.getThrowable())) continue;
+			// when no throwable, throwable filters must not disqualify
+			if (!throwableFiltersAccept(h, null)) continue;
 
-			// quick presence check for required attrs
+			// required attributes
 			if (!h.requiredAttrs().isEmpty()) {
 				List<String> missing = missingAttrs(holder, h.requiredAttrs());
 				if (!missing.isEmpty()) {
@@ -84,33 +119,7 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				}
 			}
 
-			final Object[] args;
-			try {
-				args = bindParams(h, holder);
-			} catch (AttrBindingException ex) {
-				log.debug(
-						"Binding error for handler={} name={} phase={} key={}: {}",
-						h.id(),
-						holder.getName(),
-						phase,
-						ex.key(),
-						ex.getMessage());
-				continue;
-			}
-
-			try {
-				Method m = h.method();
-				if (!m.canAccess(h.bean())) m.setAccessible(true);
-				m.invoke(h.bean(), args);
-				any = true;
-			} catch (Throwable t) {
-				log.warn(
-						"Handler invocation failed handler={} name={} phase={}: {}",
-						h.id(),
-						holder.getName(),
-						phase,
-						t.toString());
-			}
+			if (invokeHandler(h, holder, phase)) any = true;
 		}
 
 		if (!any) {
@@ -152,35 +161,56 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		}
 	}
 
-	/* ================= Helpers ================= */
+	/* ================= Selection & Matching Helpers ================= */
 
-	private static Map<Lifecycle, List<Handler>> indexByLifecycle(List<Handler> handlers) {
-		Map<Lifecycle, List<Handler>> map = new EnumMap<>(Lifecycle.class);
-		for (Lifecycle lc : Lifecycle.values()) map.put(lc, new ArrayList<>());
+	/** Choose the most specific ERROR handler. If none matches, pick a catch-all, else null. */
+	private Handler selectBestErrorHandler(
+			List<Handler> candidates, TelemetryHolder holder, Lifecycle phase, Throwable t) {
+		Handler best = null;
+		int bestDist = Integer.MAX_VALUE;
 
-		for (Handler h : handlers) {
-			// If no lifecycle mask, handler applies to all phases
-			boolean anyMask = (h.lifecycleMask() != null);
-			if (!anyMask) {
-				for (Lifecycle lc : Lifecycle.values()) map.get(lc).add(h);
-			} else {
-				for (Lifecycle lc : Lifecycle.values()) {
-					if (h.lifecycleAccepts(lc)) map.get(lc).add(h);
-				}
+		// First pass: specific matches (based on throwableTypes + message/cause)
+		for (Handler h : candidates) {
+			if (!h.isErrorMode()) continue; // only ERROR here
+			if (!h.kindAccepts(nullToInternal(holder.getSpanKind()))) continue;
+			if (!h.nameMatches(holder.getName())) continue;
+			if (!throwableFiltersAccept(h, t)) continue;
+
+			int dist = distanceToTypes(t, h.throwableTypes(), h.includeSubclasses());
+			// If no types are declared, treat as catch-all (handled in second pass)
+			if (dist == Integer.MAX_VALUE) continue;
+
+			// Keep closest match
+			if (dist < bestDist) {
+				bestDist = dist;
+				best = h;
 			}
 		}
-		for (Lifecycle lc : Lifecycle.values()) {
-			map.put(lc, List.copyOf(map.get(lc)));
+		if (best != null) return best;
+
+		// Second pass: catch-alls for this selector (no types declared)
+		for (Handler h : candidates) {
+			if (!h.isErrorMode()) continue;
+			if (!h.kindAccepts(nullToInternal(holder.getSpanKind()))) continue;
+			if (!h.nameMatches(holder.getName())) continue;
+			// no types means catch-all; still respect message/cause filters if present
+			if (!throwableFiltersAccept(h, t)) continue;
+
+			if (h.throwableTypes() == null || h.throwableTypes().isEmpty()) {
+				return h; // first catch-all is fine; ordering can be improved with priority later
+			}
 		}
-		return map;
+		return null;
 	}
 
-	private static SpanKind nullToInternal(SpanKind kind) {
-		return (kind == null) ? SpanKind.INTERNAL : kind;
-	}
+	/** Accepts throwable-related filters on the handler given the current throwable (may be null). */
+	private static boolean throwableFiltersAccept(Handler h, Throwable t) {
+		// When there is no throwable: ERROR handlers are already filtered out by caller, so only
+		// allow NORMAL/ALWAYS here, and ignore throwable type/message/cause filters.
+		if (t == null) {
+			return true;
+		}
 
-	private static boolean throwableMatches(Handler h, Throwable t) {
-		if (t == null) return !h.requireThrowable();
 		// types
 		List<Class<? extends Throwable>> types = h.throwableTypes();
 		if (types != null && !types.isEmpty()) {
@@ -213,11 +243,92 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		return true;
 	}
 
+	/** Class distance to the closest declared type; Integer.MAX_VALUE if none declared. */
+	private static int distanceToTypes(Throwable t, List<Class<? extends Throwable>> types, boolean includeSubclasses) {
+		if (types == null || types.isEmpty()) return Integer.MAX_VALUE;
+		int best = Integer.MAX_VALUE;
+		for (Class<? extends Throwable> cls : types) {
+			if (includeSubclasses ? cls.isInstance(t) : t.getClass().equals(cls)) {
+				int d = classDistance(t.getClass(), cls);
+				if (d < best) best = d;
+			}
+		}
+		return best;
+	}
+
+	private static int classDistance(Class<?> actual, Class<?> target) {
+		if (target == null) return Integer.MAX_VALUE;
+		int d = 0;
+		Class<?> c = actual;
+		while (c != null && !target.equals(c)) {
+			c = c.getSuperclass();
+			d++;
+		}
+		return (c == null) ? Integer.MAX_VALUE : d;
+	}
+
+	/* ================= Existing Helpers (mostly unchanged) ================= */
+
+	private static Map<Lifecycle, List<Handler>> indexByLifecycle(List<Handler> handlers) {
+		Map<Lifecycle, List<Handler>> map = new EnumMap<>(Lifecycle.class);
+		for (Lifecycle lc : Lifecycle.values()) map.put(lc, new ArrayList<>());
+
+		for (Handler h : handlers) {
+			// If no lifecycle mask, handler applies to all phases
+			boolean anyMask = (h.lifecycleMask() != null);
+			if (!anyMask) {
+				for (Lifecycle lc : Lifecycle.values()) map.get(lc).add(h);
+			} else {
+				for (Lifecycle lc : Lifecycle.values()) {
+					if (h.lifecycleAccepts(lc)) map.get(lc).add(h);
+				}
+			}
+		}
+		for (Lifecycle lc : Lifecycle.values()) {
+			map.put(lc, List.copyOf(map.get(lc)));
+		}
+		return map;
+	}
+
+	private static SpanKind nullToInternal(SpanKind kind) {
+		return (kind == null) ? SpanKind.INTERNAL : kind;
+	}
+
 	private static List<String> missingAttrs(TelemetryHolder holder, Set<String> required) {
 		if (required == null || required.isEmpty()) return List.of();
 		List<String> missing = new ArrayList<>();
 		for (String k : required) if (!holder.hasAttr(k)) missing.add(k);
 		return missing;
+	}
+
+	private boolean invokeHandler(Handler h, TelemetryHolder holder, Lifecycle phase) {
+		final Object[] args;
+		try {
+			args = bindParams(h, holder);
+		} catch (AttrBindingException ex) {
+			log.debug(
+					"Binding error for handler={} name={} phase={} key={}: {}",
+					h.id(),
+					holder.getName(),
+					phase,
+					ex.key(),
+					ex.getMessage());
+			return false;
+		}
+		try {
+			Method m = h.method();
+			if (!m.canAccess(h.bean())) m.setAccessible(true);
+			m.invoke(h.bean(), args);
+			return true;
+		} catch (Throwable t) {
+			log.warn(
+					"Handler invocation failed handler={} name={} phase={}: {}",
+					h.id(),
+					holder.getName(),
+					phase,
+					t.toString());
+			return false;
+		}
 	}
 
 	/**
@@ -242,6 +353,8 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				if (b instanceof BatchBinder) {
 					// single-event dispatch: batch param not applicable
 					val = null;
+				} else if (b instanceof HolderBinder) {
+					val = holder;
 				} else if (b != null) {
 					val = b.bind(holder);
 				}
@@ -367,7 +480,6 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		if (targetType.isInstance(raw)) return raw;
 		// Most handler params will ask for String; add more converters as needed.
 		if (targetType == String.class) return String.valueOf(raw);
-		// simple numeric coercions could go here if required later
 		return raw; // best effort
 	}
 

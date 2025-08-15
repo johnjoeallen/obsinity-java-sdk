@@ -21,28 +21,28 @@ import com.obsinity.telemetry.model.Lifecycle;
  *   <li><b>Prefix match:</b> set {@link #namePrefix()}, e.g. {@code namePrefix="db.query."} to match
  *       {@code db.query.select}, {@code db.query.insert}, etc.
  *   <li>If both are provided, <b>exact</b> takes precedence over <b>prefix</b>.
- *   <li>{@link #nameRegex()} is deprecated and ignored by new scanners.
  * </ul>
  *
  * <h2>Other filters</h2>
  *
  * <ul>
- *   <li>{@link #lifecycle()} – restricts which {@link Lifecycle} phases the handler accepts (empty = any).</li>
- *   <li>{@link #kinds()} – restricts accepted {@link SpanKind}s (empty = any). Null span kinds are treated as INTERNAL.</li>
- *   <li>{@link #throwableTypes()} / {@link #includeSubclasses()} – narrow which exception types (if any) this handler matches.</li>
- *   <li>{@link #messageRegex()} – optional regex matched against {@code Throwable.getMessage()} (if present).</li>
- *   <li>{@link #causeType()} – optional fully-qualified class name; the throwable's {@code getCause()} must
- *       be an instance of this type for the handler to run.</li>
+ *   <li>{@link #lifecycle()} – restricts which {@link Lifecycle} phases the handler accepts (empty = any).
+ *   <li>{@link #kinds()} – restricts accepted {@link SpanKind}s (empty = any). Null span kinds are treated as INTERNAL.
+ *   <li>{@link #throwableTypes()} / {@link #includeSubclasses()} – narrow which exception types (if any) this handler
+ *       matches.
+ *   <li>{@link #messageRegex()} – optional regex matched against {@code Throwable.getMessage()} (if present).
+ *   <li>{@link #causeType()} – optional fully-qualified class name; the throwable's {@code getCause()} must be an
+ *       instance of this type for the handler to run.
  * </ul>
  *
  * <h2>Dispatch mode</h2>
- * <p>
- * {@link #mode()} controls when the handler runs relative to exception presence:
- * </p>
+ *
+ * <p>{@link #mode()} controls when the handler runs relative to exception presence:
+ *
  * <ul>
- *   <li>{@code NORMAL}: runs only when no exception is present (no {@code @BindEventException} param allowed).</li>
- *   <li>{@code ERROR}: runs only when an exception is present (exactly one {@code @BindEventException} param required).</li>
- *   <li>{@code ALWAYS}: runs regardless (exception param optional; at most one if present).</li>
+ *   <li>{@code NORMAL}: runs only when no exception is present (no {@code @BindEventException} param allowed).
+ *   <li>{@code ERROR}: runs only when an exception is present (exactly one {@code @BindEventException} param required).
+ *   <li>{@code ALWAYS}: runs regardless (exception param optional; at most one if present).
  * </ul>
  *
  * <h2>Examples</h2>
@@ -96,14 +96,12 @@ public @interface OnEvent {
 	 */
 	String namePrefix() default "";
 
-	/**
-	 * Lifecycle phases this handler accepts. Empty means "any".
-	 */
+	/** Lifecycle phases this handler accepts. Empty means "any". */
 	Lifecycle[] lifecycle() default {};
 
 	/**
-	 * Controls when the handler runs relative to exception presence
-	 * and whether an exception parameter is allowed/required.
+	 * Controls when the handler runs relative to exception presence and whether an exception parameter is
+	 * allowed/required.
 	 */
 	DispatchMode mode() default DispatchMode.NORMAL;
 

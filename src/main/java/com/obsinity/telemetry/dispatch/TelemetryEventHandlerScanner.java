@@ -5,6 +5,7 @@ import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -13,9 +14,6 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
-import com.obsinity.telemetry.annotations.PullAllContextValues;
-import com.obsinity.telemetry.annotations.PullAttribute;
-import com.obsinity.telemetry.annotations.PullContextValue;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.util.ClassUtils;
@@ -24,41 +22,38 @@ import io.opentelemetry.api.trace.SpanKind;
 import com.obsinity.telemetry.annotations.BindEventThrowable;
 import com.obsinity.telemetry.annotations.DispatchMode;
 import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.PullAllContextValues;
+import com.obsinity.telemetry.annotations.PullAttribute;
+import com.obsinity.telemetry.annotations.PullContextValue;
 import com.obsinity.telemetry.annotations.RequiredAttributes;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /**
- * Scans beans for methods annotated with {@link OnEvent} on classes marked with
- * {@link TelemetryEventHandler} and produces immutable {@link Handler} descriptors.
+ * Scans beans for methods annotated with {@link OnEvent} on classes marked with {@link TelemetryEventHandler} and
+ * produces immutable {@link Handler} descriptors.
  *
- * <p><b>Name matching:</b> supports exact name ({@code @OnEvent(name="...")} or {@code @OnEvent("...")})
- * and prefix matching ({@code @OnEvent(namePrefix="...")}). Regex name matching is not supported.</p>
+ * <p><b>Name matching:</b> supports exact name ({@code @OnEvent(name="...")} or {@code @OnEvent("...")}) and prefix
+ * matching ({@code @OnEvent(namePrefix="...")}). Regex name matching is not supported.
  *
- * <p><b>Filters:</b> lifecycle ({@link OnEvent#lifecycle()}), span kind ({@link OnEvent#kinds()}),
- * exception types/message/cause ({@link OnEvent#throwableTypes()}, {@link OnEvent#messageRegex()},
- * {@link OnEvent#causeType()}), combined with {@link OnEvent#mode()}.</p>
+ * <p><b>Filters:</b> lifecycle ({@link OnEvent#lifecycle()}), span kind ({@link OnEvent#kinds()}), exception
+ * types/message/cause ({@link OnEvent#throwableTypes()}, {@link OnEvent#messageRegex()}, {@link OnEvent#causeType()}),
+ * combined with {@link OnEvent#mode()}.
  *
  * <p><b>DispatchMode & exception binding rules:</b>
- * <ul>
- *   <li>{@code mode=NORMAL}: <b>no</b> {@code @BindEventThrowable} parameter allowed.</li>
- *   <li>{@code mode=ERROR}: <b>exactly one</b> {@code @BindEventThrowable} parameter is required
- *       and its type must be {@link Throwable} or a subclass.</li>
- *   <li>{@code mode=ALWAYS}: {@code @BindEventThrowable} is optional; if present, at most one and must be a {@link Throwable} type.</li>
- * </ul>
- * </p>
  *
- * <p><b>Parameter binding:</b>
  * <ul>
- *   <li>{@code @PullAttribute("key")} / {@code name="key"} – persisted attribute (optional required flag).</li>
- *   <li>{@code @PullContextValue("key")} / {@code name="key"} – ephemeral context value.</li>
- *   <li>{@code @PullAllContextValues} – full event context map (must be {@code Map}).</li>
- *   <li>{@code @BindEventThrowable} – bind event exception (source resolved by your binder).</li>
- *   <li>{@code TelemetryHolder} – inject holder.</li>
- *   <li>{@code List<TelemetryHolder>} – only for {@code lifecycle=ROOT_FLOW_FINISHED} (batch handlers).</li>
+ *   <li>{@code mode=NORMAL}: <b>no</b> {@code @BindEventThrowable} parameter allowed.
+ *   <li>{@code mode=ERROR}: <b>exactly one</b> {@code @BindEventThrowable} parameter is required and its type must be
+ *       {@link Throwable} or a subclass.
+ *   <li>{@code mode=ALWAYS}: {@code @BindEventThrowable} is optional; if present, at most one and must be a
+ *       {@link Throwable} type.
  * </ul>
- * </p>
+ *
+ * <p><b>Strict catch‑all validation:</b> For each selector discovered on this class, if any handler exists (any mode),
+ * there must be at least one {@code mode=ERROR} handler whose {@code @BindEventThrowable} parameter type is
+ * {@code Exception} or {@code Throwable}. Missing this will fail startup.
  */
 @Component
 public final class TelemetryEventHandlerScanner {
@@ -71,6 +66,9 @@ public final class TelemetryEventHandlerScanner {
 			return List.of(); // skip silently
 		}
 
+		// Track per-selector stats to enforce catch-all presence
+		Map<String, SelectorStats> stats = new LinkedHashMap<>();
+
 		List<Handler> out = new ArrayList<>();
 		for (Method m : userClass.getMethods()) {
 			OnEvent on = m.getAnnotation(OnEvent.class);
@@ -80,6 +78,7 @@ public final class TelemetryEventHandlerScanner {
 
 			String exact = on.name().isBlank() ? (on.value().isBlank() ? null : on.value()) : on.name();
 			String namePrefix = on.namePrefix().isBlank() ? null : on.namePrefix();
+			String selectorKey = selectorKeyOf(exact, namePrefix);
 
 			BitSet lifecycleMask = bitset(on.lifecycle(), Lifecycle.values().length, lc -> lc.ordinal());
 			BitSet kindMask = bitset(on.kinds(), SpanKind.values().length, k -> k.ordinal());
@@ -92,7 +91,7 @@ public final class TelemetryEventHandlerScanner {
 					causeType = ClassUtils.resolveClassName(on.causeType(), userClass.getClassLoader());
 				} catch (IllegalArgumentException e) {
 					throw new IllegalArgumentException(
-						"@OnEvent causeType not found: " + on.causeType() + " on " + signature(userClass, m));
+							"@OnEvent causeType not found: " + on.causeType() + " on " + signature(userClass, m));
 				}
 			}
 
@@ -126,7 +125,7 @@ public final class TelemetryEventHandlerScanner {
 					Class<?> t = p.getType();
 					if (!Throwable.class.isAssignableFrom(t)) {
 						throw new IllegalArgumentException(
-							"@BindEventThrowable parameter must be a Throwable: " + signature(userClass, m));
+								"@BindEventThrowable parameter must be a Throwable: " + signature(userClass, m));
 					}
 					exceptionParamCount++;
 					exceptionParamType = t;
@@ -141,7 +140,7 @@ public final class TelemetryEventHandlerScanner {
 					// Whole EventContext map
 					if (!Map.class.isAssignableFrom(p.getType())) {
 						throw new IllegalArgumentException(
-							"@PullAllContextValues parameter must be a Map: " + signature(userClass, m));
+								"@PullAllContextValues parameter must be a Map: " + signature(userClass, m));
 					}
 					binders.add(new AllEventContextBinder());
 
@@ -155,33 +154,64 @@ public final class TelemetryEventHandlerScanner {
 
 				} else {
 					throw new IllegalArgumentException(
-						"Unsupported parameter binding on " + signature(userClass, m) + " for parameter: " + p);
+							"Unsupported parameter binding on " + signature(userClass, m) + " for parameter: " + p);
 				}
 			}
 
 			// Enforce DispatchMode ↔ exception parameter rules
 			validateModeAndExceptionParams(on.mode(), exceptionParamCount, exceptionParamType, userClass, m);
 
+			// Track for strict catch-all: any handler for this selector?
+			SelectorStats selStats = stats.computeIfAbsent(selectorKey, k -> new SelectorStats());
+			selStats.anyHandlers = true;
+			// Catch-all exists if mode=ERROR and @BindEventThrowable param type is Exception or Throwable
+			if (on.mode() == DispatchMode.ERROR
+					&& exceptionParamType != null
+					&& (Exception.class.equals(exceptionParamType) || Throwable.class.equals(exceptionParamType))) {
+				selStats.hasCatchAllError = true;
+			}
+
 			List<Class<? extends Throwable>> types = List.of(on.throwableTypes());
 			String id = userClass.getSimpleName() + "#" + m.getName();
 
 			out.add(new Handler(
-				bean,
-				m,
-				exact,
-				namePrefix,           // <-- prefix, not regex
-				lifecycleMask,
-				kindMask,
-				/* was on.requireThrowable(): derive from mode instead */ (on.mode() == DispatchMode.ERROR),
-				types,
-				on.includeSubclasses(),
-				msgPat,
-				causeType,
-				List.copyOf(binders),
-				Set.copyOf(requiredAttrs),
-				id));
+					bean,
+					m,
+					exact,
+					namePrefix, // <-- prefix, not regex
+					lifecycleMask,
+					kindMask,
+					on.mode(), // <-- pass DispatchMode here
+					types,
+					on.includeSubclasses(),
+					msgPat,
+					causeType,
+					List.copyOf(binders),
+					Set.copyOf(requiredAttrs),
+					id));
 		}
+
+		// Strict catch-all validation (per selector in this class)
+		stats.forEach((key, s) -> {
+			if (s.anyHandlers && !s.hasCatchAllError) {
+				throw new IllegalStateException(
+						"[Obsinity] Missing catch‑all error handler (mode=ERROR with @BindEventThrowable Exception|Throwable) "
+								+ "for selector '" + key + "' in " + userClass.getName());
+			}
+		});
+
 		return out;
+	}
+
+	private static final class SelectorStats {
+		boolean anyHandlers;
+		boolean hasCatchAllError;
+	}
+
+	private static String selectorKeyOf(String exact, String prefix) {
+		if (exact != null) return "name:" + exact;
+		if (prefix != null) return "prefix:" + prefix;
+		return "name:*"; // safeguard
 	}
 
 	/** Resolve underlying user class when running with Spring proxies. */
@@ -202,64 +232,56 @@ public final class TelemetryEventHandlerScanner {
 		boolean hasExact = !(on.name().isBlank() && on.value().isBlank());
 		boolean hasPrefix = !on.namePrefix().isBlank();
 		if (hasExact && hasPrefix) {
-			throw new IllegalArgumentException(
-				"@OnEvent cannot set both name/name(value) and namePrefix on " + signature(m.getDeclaringClass(), m));
+			throw new IllegalArgumentException("@OnEvent cannot set both name/name(value) and namePrefix on "
+					+ signature(m.getDeclaringClass(), m));
 		}
 	}
 
 	private static void validateListParamAllowed(OnEvent on, Class<?> userClass, Method m) {
 		var lifecycles = Arrays.asList(on.lifecycle());
 		boolean onlyRootFinished =
-			!lifecycles.isEmpty() && lifecycles.stream().allMatch(lc -> lc == Lifecycle.ROOT_FLOW_FINISHED);
+				!lifecycles.isEmpty() && lifecycles.stream().allMatch(lc -> lc == Lifecycle.ROOT_FLOW_FINISHED);
 		if (!onlyRootFinished) {
 			throw new IllegalArgumentException(
-				"List<TelemetryHolder> parameters are only allowed for lifecycle=ROOT_FLOW_FINISHED on "
-					+ signature(userClass, m));
+					"List<TelemetryHolder> parameters are only allowed for lifecycle=ROOT_FLOW_FINISHED on "
+							+ signature(userClass, m));
 		}
 	}
 
 	private static void validateModeAndExceptionParams(
-		DispatchMode mode,
-		int exceptionParamCount,
-		Class<?> exceptionParamType,
-		Class<?> userClass,
-		Method m
-	) {
+			DispatchMode mode, int exceptionParamCount, Class<?> exceptionParamType, Class<?> userClass, Method m) {
 		switch (mode) {
 			case NORMAL -> {
 				if (exceptionParamCount > 0) {
 					throw new IllegalArgumentException(
-						"@OnEvent(mode=NORMAL) must not declare @BindEventThrowable parameter on "
-							+ signature(userClass, m));
+							"@OnEvent(mode=NORMAL) must not declare @BindEventThrowable parameter on "
+									+ signature(userClass, m));
 				}
 			}
 			case ERROR -> {
 				if (exceptionParamCount != 1) {
 					throw new IllegalArgumentException(
-						"@OnEvent(mode=ERROR) must declare exactly one @BindEventThrowable parameter on "
-							+ signature(userClass, m));
+							"@OnEvent(mode=ERROR) must declare exactly one @BindEventThrowable parameter on "
+									+ signature(userClass, m));
 				}
 				if (exceptionParamType == null || !Throwable.class.isAssignableFrom(exceptionParamType)) {
 					throw new IllegalArgumentException(
-						"@BindEventThrowable parameter must be a Throwable type on "
-							+ signature(userClass, m));
+							"@BindEventThrowable parameter must be a Throwable type on " + signature(userClass, m));
 				}
 			}
 			case ALWAYS -> {
 				if (exceptionParamCount > 1) {
 					throw new IllegalArgumentException(
-						"@OnEvent(mode=ALWAYS) may declare at most one @BindEventThrowable parameter on "
-							+ signature(userClass, m));
+							"@OnEvent(mode=ALWAYS) may declare at most one @BindEventThrowable parameter on "
+									+ signature(userClass, m));
 				}
-				if (exceptionParamCount == 1 &&
-					(exceptionParamType == null || !Throwable.class.isAssignableFrom(exceptionParamType))) {
+				if (exceptionParamCount == 1
+						&& (exceptionParamType == null || !Throwable.class.isAssignableFrom(exceptionParamType))) {
 					throw new IllegalArgumentException(
-						"@BindEventThrowable parameter must be a Throwable type on "
-							+ signature(userClass, m));
+							"@BindEventThrowable parameter must be a Throwable type on " + signature(userClass, m));
 				}
 			}
-			default -> throw new IllegalArgumentException(
-				"Unknown DispatchMode on " + signature(userClass, m));
+			default -> throw new IllegalArgumentException("Unknown DispatchMode on " + signature(userClass, m));
 		}
 	}
 

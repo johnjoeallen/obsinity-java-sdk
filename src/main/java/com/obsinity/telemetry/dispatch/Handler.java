@@ -7,6 +7,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.annotations.DispatchMode;
 import com.obsinity.telemetry.model.Lifecycle;
 
 /** Immutable, precompiled handler descriptor discovered at bootstrap. */
@@ -17,7 +18,7 @@ public record Handler(
 		String namePrefix, // prefix-based match (optional)
 		BitSet lifecycleMask,
 		BitSet kindMask,
-		boolean requireThrowable,
+		DispatchMode mode, // <-- replaces requireThrowable
 		List<Class<? extends Throwable>> throwableTypes,
 		boolean includeSubclasses,
 		Pattern messagePattern, // still regex for message if you use it
@@ -43,5 +44,18 @@ public record Handler(
 			return name != null && name.startsWith(namePrefix);
 		}
 		return true; // no constraint
+	}
+
+	/** Convenience flags for dispatch logic. */
+	public boolean isErrorMode() {
+		return mode == DispatchMode.ERROR;
+	}
+
+	public boolean isNormalMode() {
+		return mode == DispatchMode.NORMAL;
+	}
+
+	public boolean isAlwaysMode() {
+		return mode == DispatchMode.ALWAYS;
 	}
 }

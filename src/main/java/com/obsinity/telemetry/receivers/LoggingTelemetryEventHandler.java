@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.obsinity.telemetry.annotations.BindEventThrowable;
+import com.obsinity.telemetry.annotations.DispatchMode;
 import com.obsinity.telemetry.annotations.OnEvent;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.model.Lifecycle;
@@ -35,6 +37,18 @@ public class LoggingTelemetryEventHandler {
 		} else {
 			this.mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 		}
+	}
+
+	/** Catch‑all error handler required by strict scanner validation. */
+	@OnEvent(mode = DispatchMode.ERROR)
+	public void onAnyError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
+		// Keeping it simple; presence satisfies validation. Optional: log the error.
+		log.warn(
+				"Telemetry ERROR event: name={} traceId={} spanId={} ex={}",
+				holder.name(),
+				holder.traceId(),
+				holder.spanId(),
+				ex.toString());
 	}
 
 	@OnEvent(lifecycle = {Lifecycle.FLOW_STARTED})
