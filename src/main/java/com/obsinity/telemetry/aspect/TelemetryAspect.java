@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import com.obsinity.telemetry.annotations.Flow;
@@ -60,6 +62,7 @@ import com.obsinity.telemetry.processor.TelemetryProcessor;
  * @since 0.1.0
  */
 @Aspect
+@Order(Ordered.HIGHEST_PRECEDENCE)
 @RequiredArgsConstructor
 @Component
 public class TelemetryAspect {
