@@ -1,8 +1,3 @@
-Alright — here’s the **complete merged document**.
-It keeps your original structure, adds the **extensive annotation descriptions**, and preserves all the **Java examples** so it’s a single, self-contained developer reference.
-
----
-
 # Obsinity Telemetry Developer Guide
 
 ## Annotation Reference
@@ -667,5 +662,252 @@ Attributes persisted; context discarded at scope end
 | All context (read-only)    | `@OnEvent @PullAllContextValues`                                                 | Inject all context              | `Map<String,Object> ctx`                        |
 
 ---
+<full developer guide content above>
 
-If you want, I can now make a **companion “cheat-sheet only” version** of this so engineers can keep it beside their IDE for quick reference. That way, this doc stays comprehensive, and the cheat-sheet stays minimal for daily coding.
+---
+
+## Additional Examples
+
+### Minimal Flow with Start & Finish Handlers
+
+This example shows the smallest possible flow around a single method. It’s ideal for wrapping the entirety of an operation that needs to be tracked from start to finish.
+
+```java
+package com.example.telemetry.samples.flowmin;
+
+import com.obsinity.telemetry.annotations.Flow;
+import org.springframework.stereotype.Service;
+
+@Service
+public class MinimalFlowService {
+  @Flow(name = "ops.minimal")
+  public void run() {
+    // business logic
+  }
+}
+```
+
+```java
+package com.example.telemetry.samples.flowmin;
+
+import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import com.obsinity.telemetry.model.Lifecycle;
+import org.springframework.stereotype.Component;
+
+@Component
+@TelemetryEventHandler
+public class MinimalFlowHandlers {
+  @OnEvent(name = "ops.minimal", lifecycles = {Lifecycle.FLOW_STARTED})
+  public void onStart() { }
+
+  @OnEvent(name = "ops.minimal", lifecycles = {Lifecycle.FLOW_FINISHED})
+  public void onFinish() { }
+}
+```
+
+---
+
+### Flow with a Single Step
+
+Wraps a high-level process in a `@Flow` and instruments a specific part with a `@Step`.
+
+```java
+package com.example.telemetry.samples.flowstep;
+
+import com.obsinity.telemetry.annotations.Flow;
+import com.obsinity.telemetry.annotations.Step;
+import org.springframework.stereotype.Service;
+
+@Service
+public class FlowWithStepService {
+  @Flow(name = "checkout.flow")
+  public void checkout() { validateCart(); }
+
+  @Step(name = "checkout.validate")
+  void validateCart() { }
+}
+```
+
+```java
+package com.example.telemetry.samples.flowstep;
+
+import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import com.obsinity.telemetry.model.Lifecycle;
+import org.springframework.stereotype.Component;
+
+@Component
+@TelemetryEventHandler
+public class FlowWithStepHandlers {
+  @OnEvent(name = "checkout.flow", lifecycles = {Lifecycle.FLOW_FINISHED})
+  public void onFlowFinished() { }
+
+  @OnEvent(name = "checkout.validate", lifecycles = {Lifecycle.FLOW_FINISHED})
+  public void onStepFinished() { }
+}
+```
+
+---
+
+### Prefix Matching for a Family of Steps
+
+Multiple related steps share a naming pattern and are handled by prefix.
+
+```java
+package com.example.telemetry.samples.prefix;
+
+import com.obsinity.telemetry.annotations.Flow;
+import com.obsinity.telemetry.annotations.Step;
+import org.springframework.stereotype.Service;
+
+@Service
+public class FulfilmentService {
+  @Flow(name = "fulfilment.flow")
+  public void fulfilOrder() { pickItems(); packBox(); shipParcel(); }
+
+  @Step(name = "fulfilment.pick.items") void pickItems() { }
+  @Step(name = "fulfilment.pack.box")  void packBox()   { }
+  @Step(name = "fulfilment.ship.parcel") void shipParcel() { }
+}
+```
+
+```java
+package com.example.telemetry.samples.prefix;
+
+import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import com.obsinity.telemetry.model.Lifecycle;
+import org.springframework.stereotype.Component;
+
+@Component
+@TelemetryEventHandler
+public class FulfilmentHandlers {
+  @OnEvent(namePrefix = "fulfilment.pick.", lifecycles = {Lifecycle.FLOW_FINISHED})
+  public void onAnyPick() { }
+
+  @OnEvent(namePrefix = "fulfilment.pack.", lifecycles = {Lifecycle.FLOW_FINISHED})
+  public void onAnyPack() { }
+
+  @OnEvent(namePrefix = "fulfilment.ship.", lifecycles = {Lifecycle.FLOW_FINISHED})
+  public void onAnyShip() { }
+}
+```
+
+---
+
+### Persisted Attributes: Push in Producer, Pull in Handler
+
+Producer saves persistent data with `@PushAttribute`, handler retrieves with `@PullAttribute`.
+
+```java
+package com.example.telemetry.samples.attrs;
+
+import com.obsinity.telemetry.annotations.Flow;
+import com.obsinity.telemetry.annotations.PushAttribute;
+import org.springframework.stereotype.Service;
+
+@Service
+public class CreateUserService {
+  @Flow(name = "users.create")
+  public void create(@PushAttribute(name = "user.id") String userId,
+                     @PushAttribute(name = "user.role") String role) {
+  }
+}
+```
+
+```java
+package com.example.telemetry.samples.attrs;
+
+import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.PullAttribute;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import com.obsinity.telemetry.model.Lifecycle;
+import org.springframework.stereotype.Component;
+
+@Component
+@TelemetryEventHandler
+public class CreateUserHandlers {
+  @OnEvent(name = "users.create", lifecycles = {Lifecycle.FLOW_FINISHED})
+  public void onCreated(@PullAttribute(name = "user.id") String id,
+                        @PullAttribute(name = "user.role") String role) {
+  }
+}
+```
+
+---
+
+### Error Handling with `@BindEventThrowable`
+
+Handler runs only for events with an exception.
+
+```java
+package com.example.telemetry.samples.errors;
+
+import com.obsinity.telemetry.annotations.Flow;
+import org.springframework.stereotype.Service;
+
+@Service
+public class ErrorProneService {
+  @Flow(name = "service.error")
+  public void doWork() {
+    throw new RuntimeException("fail");
+  }
+}
+```
+
+```java
+package com.example.telemetry.samples.errors;
+
+import com.obsinity.telemetry.annotations.BindEventThrowable;
+import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import com.obsinity.telemetry.model.Lifecycle;
+import org.springframework.stereotype.Component;
+
+@Component
+@TelemetryEventHandler
+public class ErrorHandlers {
+  @OnEvent(name = "service.error", lifecycles = {Lifecycle.FLOW_FINISHED}, requireThrowable = true)
+  public void onError(@BindEventThrowable Throwable t) { }
+}
+```
+
+---
+
+### Batch Root Flow Finish Example
+
+Handler receives all flows in a root batch.
+
+```java
+package com.example.telemetry.samples.batch;
+
+import com.obsinity.telemetry.annotations.Flow;
+import org.springframework.stereotype.Service;
+
+@Service
+public class BatchRootFlowService {
+  @Flow(name = "batch.root")
+  public void run() { }
+}
+```
+
+```java
+package com.example.telemetry.samples.batch;
+
+import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import com.obsinity.telemetry.model.Lifecycle;
+import com.obsinity.telemetry.model.TelemetryHolder;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+@Component
+@TelemetryEventHandler
+public class BatchRootFlowHandlers {
+  @OnEvent(name = "batch.root", lifecycles = {Lifecycle.ROOT_FLOW_FINISHED})
+  public void onRootDone(List<TelemetryHolder> flows) { }
+}
+```
+
