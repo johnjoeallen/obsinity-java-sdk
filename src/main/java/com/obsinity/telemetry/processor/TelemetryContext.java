@@ -33,8 +33,8 @@ public class TelemetryContext {
 
 	/* ===================== Attributes (persisted) ===================== */
 
-	/** Back-compat alias for {@link #putAttr(String, Object)}. */
-	public Object put(String key, Object value) {
+	/** Back-compat alias for {@link #putAttr(String, Object)} that returns the same typed value. */
+	public <T> T put(String key, T value) {
 		return putAttr(key, value);
 	}
 
@@ -43,8 +43,8 @@ public class TelemetryContext {
 		putAllAttrs(map);
 	}
 
-	/** Adds a single <b>attribute</b> to the current holder. */
-	public Object putAttr(String key, Object value) {
+	/** Adds a single <b>attribute</b> to the current holder and returns the same typed value. */
+	public <T> T putAttr(String key, T value) {
 		if (key == null || key.isBlank()) return value;
 		TelemetryHolder holder = support.currentHolder();
 		if (holder != null) {
@@ -66,8 +66,8 @@ public class TelemetryContext {
 
 	/* ===================== EventContext (ephemeral, non-serialized) ===================== */
 
-	/** Adds a single <b>EventContext</b> entry to the current holder. */
-	public Object putContext(String key, Object value) {
+	/** Adds a single <b>EventContext</b> entry to the current holder and returns the same typed value. */
+	public <T> T putContext(String key, T value) {
 		if (key == null || key.isBlank()) return value;
 		TelemetryHolder holder = support.currentHolder();
 		if (holder != null) {
