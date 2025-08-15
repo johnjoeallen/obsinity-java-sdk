@@ -1,6 +1,7 @@
 package com.obsinity.telemetry.aspect;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy; // <-- added
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,9 +46,9 @@ import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 
 @SpringBootTest(
-		classes = TelemetryIntegrationBootTest.TestApp.class,
-		webEnvironment = SpringBootTest.WebEnvironment.NONE,
-		properties = {"spring.main.web-application-type=none"})
+	classes = TelemetryIntegrationBootTest.TestApp.class,
+	webEnvironment = SpringBootTest.WebEnvironment.NONE,
+	properties = {"spring.main.web-application-type=none"})
 class TelemetryIntegrationBootTest {
 
 	private static final Logger log = LoggerFactory.getLogger(TelemetryIntegrationBootTest.class);
@@ -96,13 +97,13 @@ class TelemetryIntegrationBootTest {
 		/** Build the dispatch bus that routes to @OnEvent handlers annotated with @TelemetryEventHandler. */
 		@Bean
 		TelemetryDispatchBus telemetryDispatchBus(
-				ListableBeanFactory beanFactory, TelemetryEventHandlerScanner scanner) {
+			ListableBeanFactory beanFactory, TelemetryEventHandlerScanner scanner) {
 			return new TelemetryDispatchBus(beanFactory, scanner);
 		}
 
 		@Bean
 		TelemetryProcessor telemetryProcessor(
-				TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus dispatchBus) {
+			TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus dispatchBus) {
 			return new TelemetryProcessor(binder, support, dispatchBus) {
 				@Override
 				protected OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
@@ -141,16 +142,22 @@ class TelemetryIntegrationBootTest {
 		final List<List<TelemetryHolder>> rootBatches = new CopyOnWriteArrayList<>();
 		final List<CustomTag> finishCustomTags = new CopyOnWriteArrayList<>();
 
+		// NEW: Collections to verify error dispatch rules
+		final List<TelemetryHolder> normalOnErrorFinishes = new CopyOnWriteArrayList<>();
+		final List<TelemetryHolder> alwaysOnErrorFinishes = new CopyOnWriteArrayList<>();
+		final List<TelemetryHolder> errorFinishes = new CopyOnWriteArrayList<>();
+		final List<Throwable> capturedErrors = new CopyOnWriteArrayList<>();
+
 		@OnEvent(
-				lifecycle = {Lifecycle.FLOW_STARTED},
-				mode = DispatchMode.ALWAYS)
+			lifecycle = {Lifecycle.FLOW_STARTED},
+			mode = DispatchMode.ALWAYS)
 		public void onStart(TelemetryHolder holder) {
 			starts.add(holder);
 		}
 
 		@OnEvent(
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				mode = DispatchMode.ALWAYS)
+			lifecycle = {Lifecycle.FLOW_FINISHED},
+			mode = DispatchMode.ALWAYS)
 		public void onFinish(TelemetryHolder holder) {
 			finishes.add(holder);
 		}
@@ -160,17 +167,38 @@ class TelemetryIntegrationBootTest {
 		 * (Will run only for flows that actually carry the attribute.)
 		 */
 		@OnEvent(
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				mode = DispatchMode.ALWAYS)
+			lifecycle = {Lifecycle.FLOW_FINISHED},
+			mode = DispatchMode.ALWAYS)
 		public void onFinishCustomTag(@PullAttribute(name = "custom.tag") CustomTag customTag) {
 			finishCustomTags.add(customTag);
 		}
 
 		@OnEvent(
-				lifecycle = {Lifecycle.ROOT_FLOW_FINISHED},
-				mode = DispatchMode.ALWAYS)
+			lifecycle = {Lifecycle.ROOT_FLOW_FINISHED},
+			mode = DispatchMode.ALWAYS)
 		public void onRoot(List<TelemetryHolder> batch) {
 			rootBatches.add(batch);
+		}
+
+		/* ===== Dispatch-mode verification handlers for error path (exact name filter) ===== */
+
+		// NORMAL handler (should NOT be called when the flow has an exception)
+		@OnEvent(name = "flowError", lifecycle = {Lifecycle.FLOW_FINISHED}) // default mode = NORMAL
+		public void normalFinishOnError(TelemetryHolder holder) {
+			normalOnErrorFinishes.add(holder);
+		}
+
+		// ALWAYS handler (should be called even on exception)
+		@OnEvent(name = "flowError", lifecycle = {Lifecycle.FLOW_FINISHED}, mode = DispatchMode.ALWAYS)
+		public void alwaysFinishOnError(TelemetryHolder holder) {
+			alwaysOnErrorFinishes.add(holder);
+		}
+
+		// ERROR handler (should be called exactly once when there is an exception)
+		@OnEvent(name = "flowError", lifecycle = {Lifecycle.FLOW_FINISHED}, mode = DispatchMode.ERROR)
+		public void errorFinishOnError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
+			errorFinishes.add(holder);
+			capturedErrors.add(ex);
 		}
 
 		/* ===== Catch‑all ERROR handler to satisfy strict validation for selector name:* ===== */
@@ -226,9 +254,15 @@ class TelemetryIntegrationBootTest {
 		// Example method showing how @Attribute on params would flow into OAttributes via binder
 		@Flow(name = "paramFlowExample")
 		public void paramFlowExample(
-				@PushAttribute(name = "user.id") String userId,
-				@PushAttribute(name = "flags") Map<String, Object> flags) {
+			@PushAttribute(name = "user.id") String userId,
+			@PushAttribute(name = "flags") Map<String, Object> flags) {
 			/* no-op */
+		}
+
+		// NEW: a flow that throws to test dispatch-mode behavior
+		@Flow(name = "flowError")
+		public void flowError() {
+			throw new IllegalStateException("boom");
 		}
 	}
 
@@ -244,11 +278,17 @@ class TelemetryIntegrationBootTest {
 		receiver.finishes.clear();
 		receiver.rootBatches.clear();
 		receiver.finishCustomTags.clear();
+
+		// NEW: reset error-path collections
+		receiver.normalOnErrorFinishes.clear();
+		receiver.alwaysOnErrorFinishes.clear();
+		receiver.errorFinishes.clear();
+		receiver.capturedErrors.clear();
 	}
 
 	@Test
 	@DisplayName(
-			"Flow + Step: step holder seen by handlers has attr+context; parent flow keeps them only on folded OEvent")
+		"Flow + Step: step holder seen by handlers has attr+context; parent flow keeps them only on folded OEvent")
 	void stepWritesAttrAndContext_FlowHasThemOnlyOnEvent() {
 		String out = service.flowA();
 		assertThat(out).isEqualTo("ok");
@@ -257,29 +297,29 @@ class TelemetryIntegrationBootTest {
 		assertThat(receiver.finishes).hasSize(2);
 
 		TelemetryHolder stepFinish = receiver.finishes.stream()
-				.filter(TelemetryHolder::isStep)
-				.findFirst()
-				.orElseThrow(() -> new AssertionError("Expected step finish holder"));
+			.filter(TelemetryHolder::isStep)
+			.findFirst()
+			.orElseThrow(() -> new AssertionError("Expected step finish holder"));
 		TelemetryHolder flowFinish = receiver.finishes.stream()
-				.filter(h -> !h.isStep())
-				.findFirst()
-				.orElseThrow(() -> new AssertionError("Expected flow finish holder"));
+			.filter(h -> !h.isStep())
+			.findFirst()
+			.orElseThrow(() -> new AssertionError("Expected flow finish holder"));
 
 		assertThat(stepFinish.isStep()).isTrue();
 		assertThat(stepFinish.attributes().asMap()).containsEntry("step.flag", true);
-		assertThat(stepFinish.getEventContext().get("step.ctx")).isEqualTo("ctx-value");
+		assertThat(stepFinish.getEventContext()).containsEntry("step.ctx", "ctx-value");
 
 		assertThat(flowFinish.isStep()).isFalse();
 		assertThat(flowFinish.attributes().asMap()).doesNotContainKey("step.flag");
 		assertThat(flowFinish.getEventContext().get("step.ctx")).isNull();
 
 		OEvent stepEvent = flowFinish.events().stream()
-				.filter(e -> "stepB".equals(e.name()))
-				.findFirst()
-				.orElseThrow(() -> new AssertionError("Expected folded stepB event on flow holder"));
+			.filter(e -> "stepB".equals(e.name()))
+			.findFirst()
+			.orElseThrow(() -> new AssertionError("Expected folded stepB event on flow holder"));
 
 		assertThat(stepEvent.attributes().asMap()).containsEntry("step.flag", true);
-		assertThat(stepEvent.eventContext().get("step.ctx")).isEqualTo("ctx-value");
+		assertThat(stepEvent.eventContext()).containsEntry("step.ctx", "ctx-value");
 		assertThat(stepEvent.epochNanos()).isGreaterThan(0L);
 		assertThat(stepEvent.endEpochNanos()).isNotNull();
 	}
@@ -327,9 +367,9 @@ class TelemetryIntegrationBootTest {
 		assertThat(receiver.rootBatches).hasSize(1);
 		List<TelemetryHolder> batch = receiver.rootBatches.get(0);
 		log.info(
-				"rootFlow batch (size={}): {}",
-				batch.size(),
-				batch.stream().map(TelemetryHolder::name).toList());
+			"rootFlow batch (size={}): {}",
+			batch.size(),
+			batch.stream().map(TelemetryHolder::name).toList());
 
 		assertThat(batch).hasSize(2);
 		TelemetryHolder first = batch.get(0);
@@ -365,10 +405,10 @@ class TelemetryIntegrationBootTest {
 		log.info("paramFlowExample attributes: {}", attrs);
 
 		assertThat(attrs)
-				.containsEntry("user.id", "user-123")
-				.containsEntry("flags", flags)
-				.containsEntry("test.flow", "paramFlowExample")
-				.containsEntry("declaring.method", "paramFlowExample");
+			.containsEntry("user.id", "user-123")
+			.containsEntry("flags", flags)
+			.containsEntry("test.flow", "paramFlowExample")
+			.containsEntry("declaring.method", "paramFlowExample");
 	}
 
 	@Test
@@ -377,12 +417,32 @@ class TelemetryIntegrationBootTest {
 		service.flowA();
 
 		var nonNullTags =
-				receiver.finishCustomTags.stream().filter(Objects::nonNull).toList();
+			receiver.finishCustomTags.stream().filter(Objects::nonNull).toList();
 
 		assertThat(nonNullTags)
-				.as("Expected one non-null CustomTag from flow finish")
-				.hasSize(1);
+			.as("Expected one non-null CustomTag from flow finish")
+			.hasSize(1);
 		assertThat(nonNullTags.get(0).value()).isEqualTo("integration");
+	}
+
+	/* NEW TEST: verify NORMAL is skipped when there is an exception; ERROR + ALWAYS run */
+	@Test
+	@DisplayName("Exception dispatch: ERROR + ALWAYS run, NORMAL is skipped")
+	void exceptionDispatchesErrorAndAlwaysOnly() {
+		assertThatThrownBy(() -> service.flowError())
+			.isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("boom");
+
+		// EXACTLY one ERROR handler invocation for flowError
+		assertThat(receiver.errorFinishes).hasSize(1);
+		assertThat(receiver.capturedErrors).hasSize(1);
+		assertThat(receiver.capturedErrors.get(0)).isInstanceOf(IllegalStateException.class);
+
+		// ALWAYS for flowError should run
+		assertThat(receiver.alwaysOnErrorFinishes).hasSize(1);
+
+		// NORMAL for flowError must NOT run when throwable is present
+		assertThat(receiver.normalOnErrorFinishes).isEmpty();
 	}
 
 	/* helpers */
