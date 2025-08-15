@@ -331,6 +331,11 @@ public class TelemetryHolder {
 		return status;
 	}
 
+	public TelemetryHolder setStatus(OStatus status) {
+		this.status = status;
+		return this;
+	}
+
 	public String serviceId() {
 		return serviceId;
 	}
@@ -397,8 +402,9 @@ public class TelemetryHolder {
 		return throwable;
 	}
 
-	public void setThrowable(Throwable throwable) {
+	public TelemetryHolder setThrowable(Throwable throwable) {
 		this.throwable = throwable;
+		return this;
 	}
 
 	public boolean hasThrowable() {
@@ -462,11 +468,6 @@ public class TelemetryHolder {
 	public String attrAsString(String key) {
 		Object v = attrRaw(key);
 		return (v == null) ? null : String.valueOf(v);
-	}
-	/** @deprecated Prefer {@link #attrRaw(String)} / {@link #attr(String, Class)} / {@link #attrAsString(String)} */
-	@Deprecated
-	public String attr(String key) {
-		return attrAsString(key);
 	}
 
 	public Long attrAsLong(String key) {

@@ -11,6 +11,7 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.Signature;
 import org.springframework.stereotype.Component;
 
+import io.opentelemetry.api.trace.StatusCode;
 import com.obsinity.telemetry.annotations.OrphanAlert;
 import com.obsinity.telemetry.aspect.FlowOptions;
 import com.obsinity.telemetry.model.Lifecycle;
@@ -381,7 +382,11 @@ public class TelemetryProcessor {
 
 	protected void onInvocationFinishing(final TelemetryHolder current, final FlowOptions options) {}
 
-	protected void onSuccess(final TelemetryHolder current, final Object result, final FlowOptions options) {}
+	protected void onSuccess(final TelemetryHolder current, final Object result, final FlowOptions options) {
+		current.setThrowable(null).setStatus(new OStatus(StatusCode.OK, null));
+	}
 
-	protected void onError(final TelemetryHolder current, final Throwable error, final FlowOptions options) {}
+	protected void onError(final TelemetryHolder current, final Throwable error, final FlowOptions options) {
+		current.setThrowable(error).setStatus(new OStatus(StatusCode.ERROR, error.getMessage()));
+	}
 }

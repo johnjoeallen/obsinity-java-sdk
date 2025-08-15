@@ -9,7 +9,6 @@ import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 
-import com.obsinity.telemetry.annotations.PushAttribute;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,10 +23,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.PullAttribute;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
 import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.PullAttribute;
+import com.obsinity.telemetry.annotations.PushAttribute;
 import com.obsinity.telemetry.annotations.Step;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
@@ -213,8 +213,8 @@ class TelemetryIntegrationBootTest {
 		// Example method showing how @Attribute on params would flow into OAttributes via binder
 		@Flow(name = "paramFlowExample")
 		public void paramFlowExample(
-			@PushAttribute(name = "user.id") String userId,
-			@PushAttribute(name = "flags") Map<String, Object> flags) {
+				@PushAttribute(name = "user.id") String userId,
+				@PushAttribute(name = "flags") Map<String, Object> flags) {
 			/* no-op */
 		}
 	}

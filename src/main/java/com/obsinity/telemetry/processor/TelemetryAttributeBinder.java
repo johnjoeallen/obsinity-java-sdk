@@ -16,10 +16,11 @@ import com.obsinity.telemetry.model.TelemetryHolder;
 
 /**
  * Binds method parameter annotations into telemetry:
+ *
  * <ul>
- *   <li>Delegates to {@link AttributeParamExtractor} for legacy attribute extraction.</li>
- *   <li>Additionally supports producer-side {@link PushAttribute} (persisted) and
- *       {@link PushContextValue} (ephemeral) annotations.</li>
+ *   <li>Delegates to {@link AttributeParamExtractor} for legacy attribute extraction.
+ *   <li>Additionally supports producer-side {@link PushAttribute} (persisted) and {@link PushContextValue} (ephemeral)
+ *       annotations.
  * </ul>
  */
 @Component
@@ -27,22 +28,15 @@ public class TelemetryAttributeBinder {
 
 	private final AttributeParamExtractor extractor;
 
-	/**
-	 * Optional runtime telemetry context. If null, context writes will fall back to the holder's eventContext map.
-	 */
-	@Nullable
-	private final TelemetryContext telemetryContext;
+	/** Optional runtime telemetry context. If null, context writes will fall back to the holder's eventContext map. */
+	@Nullable private final TelemetryContext telemetryContext;
 
-	/**
-	 * Backward-compatible constructor; context writes will fall back to the holder's eventContext map.
-	 */
+	/** Backward-compatible constructor; context writes will fall back to the holder's eventContext map. */
 	public TelemetryAttributeBinder(AttributeParamExtractor extractor) {
 		this(extractor, null);
 	}
 
-	/**
-	 * Preferred constructor when you want {@link PushContextValue} to route via {@link TelemetryContext}.
-	 */
+	/** Preferred constructor when you want {@link PushContextValue} to route via {@link TelemetryContext}. */
 	@Autowired
 	public TelemetryAttributeBinder(AttributeParamExtractor extractor, @Nullable TelemetryContext telemetryContext) {
 		this.extractor = extractor;
@@ -78,7 +72,8 @@ public class TelemetryAttributeBinder {
 		// Legacy / existing behavior
 		extractor.extractTo(attrs, jp);
 
-		// New: apply @PushAttribute (no holder present; context pushes can only go through TelemetryContext if provided)
+		// New: apply @PushAttribute (no holder present; context pushes can only go through TelemetryContext if
+		// provided)
 		applyPushAnnotations(null, attrs, jp);
 	}
 

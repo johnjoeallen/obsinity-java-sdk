@@ -13,9 +13,6 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
-import com.obsinity.telemetry.annotations.PullAllContextValues;
-import com.obsinity.telemetry.annotations.PullAttribute;
-import com.obsinity.telemetry.annotations.PullContextValue;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.util.ClassUtils;
@@ -23,32 +20,36 @@ import org.springframework.util.ClassUtils;
 import io.opentelemetry.api.trace.SpanKind;
 import com.obsinity.telemetry.annotations.BindEventThrowable;
 import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.PullAllContextValues;
+import com.obsinity.telemetry.annotations.PullAttribute;
+import com.obsinity.telemetry.annotations.PullContextValue;
 import com.obsinity.telemetry.annotations.RequiredAttributes;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /**
- * Scans beans for methods annotated with {@link OnEvent} on classes marked with
- * {@link TelemetryEventHandler} and produces immutable {@link Handler} descriptors.
+ * Scans beans for methods annotated with {@link OnEvent} on classes marked with {@link TelemetryEventHandler} and
+ * produces immutable {@link Handler} descriptors.
  *
  * <p><b>Name matching:</b> this scanner supports exact name ( {@code @OnEvent(name="...")} or {@code @OnEvent("...")} )
- * and prefix matching ( {@code @OnEvent(namePrefix="...")} ). Regex name matching is removed.</p>
+ * and prefix matching ( {@code @OnEvent(namePrefix="...")} ). Regex name matching is removed.
  *
- * <p><b>Filters:</b> lifecycle ({@link OnEvent#lifecycle()}), span kind ({@link OnEvent#kinds()}),
- * throwable presence/types/message/cause ({@link OnEvent#requireThrowable()}, {@link OnEvent#throwableTypes()},
- * {@link OnEvent#messageRegex()}, {@link OnEvent#causeType()}).</p>
+ * <p><b>Filters:</b> lifecycle ({@link OnEvent#lifecycle()}), span kind ({@link OnEvent#kinds()}), throwable
+ * presence/types/message/cause ({@link OnEvent#requireThrowable()}, {@link OnEvent#throwableTypes()},
+ * {@link OnEvent#messageRegex()}, {@link OnEvent#causeType()}).
  *
  * <p><b>Parameter binding:</b>
+ *
  * <ul>
- *   <li>{@code @PullAttribute("key")} or {@code @PullAttribute(name="key")} – persisted attribute (optional required flag).</li>
- *   <li>{@code @PullContextValue("key")} or {@code @PullContextValue(name="key")} – ephemeral context value.</li>
- *   <li>{@code @PullAllContextValues} – full event context map (must be {@code Map}).</li>
- *   <li>{@code @BindEventThrowable} – bind event throwable (per enum source).</li>
- *   <li>{@code TelemetryHolder} – inject holder.</li>
- *   <li>{@code List<TelemetryHolder>} – only for {@code lifecycle=ROOT_FLOW_FINISHED} (batch handlers).</li>
+ *   <li>{@code @PullAttribute("key")} or {@code @PullAttribute(name="key")} – persisted attribute (optional required
+ *       flag).
+ *   <li>{@code @PullContextValue("key")} or {@code @PullContextValue(name="key")} – ephemeral context value.
+ *   <li>{@code @PullAllContextValues} – full event context map (must be {@code Map}).
+ *   <li>{@code @BindEventThrowable} – bind event throwable (per enum source).
+ *   <li>{@code TelemetryHolder} – inject holder.
+ *   <li>{@code List<TelemetryHolder>} – only for {@code lifecycle=ROOT_FLOW_FINISHED} (batch handlers).
  * </ul>
- * </p>
  */
 @Component
 public final class TelemetryEventHandlerScanner {
@@ -82,7 +83,7 @@ public final class TelemetryEventHandlerScanner {
 					causeType = ClassUtils.resolveClassName(on.causeType(), userClass.getClassLoader());
 				} catch (IllegalArgumentException e) {
 					throw new IllegalArgumentException(
-						"@OnEvent causeType not found: " + on.causeType() + " on " + signature(userClass, m));
+							"@OnEvent causeType not found: " + on.causeType() + " on " + signature(userClass, m));
 				}
 			}
 
@@ -116,7 +117,7 @@ public final class TelemetryEventHandlerScanner {
 					// Whole EventContext map
 					if (!Map.class.isAssignableFrom(p.getType())) {
 						throw new IllegalArgumentException(
-							"@PullAllContextValues parameter must be a Map: " + signature(userClass, m));
+								"@PullAllContextValues parameter must be a Map: " + signature(userClass, m));
 					}
 					binders.add(new AllEventContextBinder());
 				} else if (List.class.isAssignableFrom(p.getType())) {
@@ -127,7 +128,7 @@ public final class TelemetryEventHandlerScanner {
 					binders.add(new HolderBinder());
 				} else {
 					throw new IllegalArgumentException(
-						"Unsupported parameter binding on " + signature(userClass, m) + " for parameter: " + p);
+							"Unsupported parameter binding on " + signature(userClass, m) + " for parameter: " + p);
 				}
 			}
 
@@ -135,20 +136,20 @@ public final class TelemetryEventHandlerScanner {
 			String id = userClass.getSimpleName() + "#" + m.getName();
 
 			out.add(new Handler(
-				bean,
-				m,
-				exact,
-				namePrefix,           // <-- prefix, not regex
-				lifecycleMask,
-				kindMask,
-				on.requireThrowable(),
-				types,
-				on.includeSubclasses(),
-				msgPat,
-				causeType,
-				List.copyOf(binders),
-				Set.copyOf(requiredAttrs),
-				id));
+					bean,
+					m,
+					exact,
+					namePrefix, // <-- prefix, not regex
+					lifecycleMask,
+					kindMask,
+					on.requireThrowable(),
+					types,
+					on.includeSubclasses(),
+					msgPat,
+					causeType,
+					List.copyOf(binders),
+					Set.copyOf(requiredAttrs),
+					id));
 		}
 		return out;
 	}
@@ -171,19 +172,19 @@ public final class TelemetryEventHandlerScanner {
 		boolean hasExact = !(on.name().isBlank() && on.value().isBlank());
 		boolean hasPrefix = !on.namePrefix().isBlank();
 		if (hasExact && hasPrefix) {
-			throw new IllegalArgumentException(
-				"@OnEvent cannot set both name/name(value) and namePrefix on " + signature(m.getDeclaringClass(), m));
+			throw new IllegalArgumentException("@OnEvent cannot set both name/name(value) and namePrefix on "
+					+ signature(m.getDeclaringClass(), m));
 		}
 	}
 
 	private static void validateListParamAllowed(OnEvent on, Class<?> userClass, Method m) {
 		var lifecycles = Arrays.asList(on.lifecycle());
 		boolean onlyRootFinished =
-			!lifecycles.isEmpty() && lifecycles.stream().allMatch(lc -> lc == Lifecycle.ROOT_FLOW_FINISHED);
+				!lifecycles.isEmpty() && lifecycles.stream().allMatch(lc -> lc == Lifecycle.ROOT_FLOW_FINISHED);
 		if (!onlyRootFinished) {
 			throw new IllegalArgumentException(
-				"List<TelemetryHolder> parameters are only allowed for lifecycle=ROOT_FLOW_FINISHED on "
-					+ signature(userClass, m));
+					"List<TelemetryHolder> parameters are only allowed for lifecycle=ROOT_FLOW_FINISHED on "
+							+ signature(userClass, m));
 		}
 	}
 

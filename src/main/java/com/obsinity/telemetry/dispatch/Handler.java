@@ -11,21 +11,21 @@ import com.obsinity.telemetry.model.Lifecycle;
 
 /** Immutable, precompiled handler descriptor discovered at bootstrap. */
 public record Handler(
-	Object bean,
-	Method method,
-	String exactName,                 // exact event name match (optional)
-	String namePrefix,                // prefix-based match (optional)
-	BitSet lifecycleMask,
-	BitSet kindMask,
-	boolean requireThrowable,
-	List<Class<? extends Throwable>> throwableTypes,
-	boolean includeSubclasses,
-	Pattern messagePattern,           // still regex for message if you use it
-	Class<?> causeTypeOrNull,
-	List<ParamBinder> binders,
-	Set<String> requiredAttrs,
-	String id                         // e.g. beanClass#method
-) {
+		Object bean,
+		Method method,
+		String exactName, // exact event name match (optional)
+		String namePrefix, // prefix-based match (optional)
+		BitSet lifecycleMask,
+		BitSet kindMask,
+		boolean requireThrowable,
+		List<Class<? extends Throwable>> throwableTypes,
+		boolean includeSubclasses,
+		Pattern messagePattern, // still regex for message if you use it
+		Class<?> causeTypeOrNull,
+		List<ParamBinder> binders,
+		Set<String> requiredAttrs,
+		String id // e.g. beanClass#method
+		) {
 	public boolean lifecycleAccepts(Lifecycle lc) {
 		return (lifecycleMask == null) || lifecycleMask.get(lc.ordinal());
 	}

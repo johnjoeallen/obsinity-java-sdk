@@ -85,8 +85,10 @@ public class TelemetryAspect {
 	 * @return the original method's return value
 	 * @throws Throwable any exception thrown by the original method; rethrown unchanged
 	 */
-	@Around(value = "execution(* *(..)) && @annotation(flow)", argNames = "joinPoint,flow")
-	public Object interceptFlow(ProceedingJoinPoint joinPoint, Flow flow) throws Throwable { // NOSONAR
+	@Around(
+			value = "execution(* *(..)) && @annotation(com.obsinity.telemetry.annotations.Flow)",
+			argNames = "joinPoint")
+	public Object interceptFlow(ProceedingJoinPoint joinPoint) throws Throwable { // NOSONAR
 		FlowOptions opts = FlowOptionsFactory.fromJoinPoint(joinPoint);
 		return telemetryProcessor.proceed(joinPoint, opts);
 	}
@@ -106,8 +108,10 @@ public class TelemetryAspect {
 	 * @return the original method's return value
 	 * @throws Throwable any exception thrown by the original method; rethrown unchanged
 	 */
-	@Around(value = "execution(* *(..)) && @annotation(step)", argNames = "joinPoint,step")
-	public Object interceptStep(ProceedingJoinPoint joinPoint, Step step) throws Throwable { // NOSONAR
+	@Around(
+			value = "execution(* *(..)) && @annotation(com.obsinity.telemetry.annotations.Step)",
+			argNames = "joinPoint")
+	public Object interceptStep(ProceedingJoinPoint joinPoint) throws Throwable { // NOSONAR
 		FlowOptions opts = FlowOptionsFactory.fromJoinPoint(joinPoint);
 		return telemetryProcessor.proceed(joinPoint, opts);
 	}

@@ -49,7 +49,7 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		this.scanner = scanner;
 		// Find only beans marked with @TelemetryEventHandler
 		Collection<Object> candidateBeans =
-			beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
+				beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
 
 		List<Handler> discovered = new ArrayList<>();
 		for (Object bean : candidateBeans) {
@@ -89,12 +89,12 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				args = bindParams(h, holder);
 			} catch (AttrBindingException ex) {
 				log.debug(
-					"Binding error for handler={} name={} phase={} key={}: {}",
-					h.id(),
-					holder.getName(),
-					phase,
-					ex.key(),
-					ex.getMessage());
+						"Binding error for handler={} name={} phase={} key={}: {}",
+						h.id(),
+						holder.getName(),
+						phase,
+						ex.key(),
+						ex.getMessage());
 				continue;
 			}
 
@@ -105,11 +105,11 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				any = true;
 			} catch (Throwable t) {
 				log.warn(
-					"Handler invocation failed handler={} name={} phase={}: {}",
-					h.id(),
-					holder.getName(),
-					phase,
-					t.toString());
+						"Handler invocation failed handler={} name={} phase={}: {}",
+						h.id(),
+						holder.getName(),
+						phase,
+						t.toString());
 			}
 		}
 
@@ -139,15 +139,15 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				m.invoke(h.bean(), args);
 			} catch (AttrBindingException ex) {
 				log.debug(
-					"Batch binding error handler={} phase=ROOT_FLOW_FINISHED key={}: {}",
-					h.id(),
-					ex.key(),
-					ex.getMessage());
+						"Batch binding error handler={} phase=ROOT_FLOW_FINISHED key={}: {}",
+						h.id(),
+						ex.key(),
+						ex.getMessage());
 			} catch (Throwable t) {
 				log.warn(
-					"Batch handler invocation failed handler={} phase=ROOT_FLOW_FINISHED: {}",
-					h.id(),
-					t.toString());
+						"Batch handler invocation failed handler={} phase=ROOT_FLOW_FINISHED: {}",
+						h.id(),
+						t.toString());
 			}
 		}
 	}
@@ -187,9 +187,15 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 			boolean match = false;
 			for (Class<? extends Throwable> cls : types) {
 				if (h.includeSubclasses()) {
-					if (cls.isInstance(t)) { match = true; break; }
+					if (cls.isInstance(t)) {
+						match = true;
+						break;
+					}
 				} else {
-					if (t.getClass().equals(cls)) { match = true; break; }
+					if (t.getClass().equals(cls)) {
+						match = true;
+						break;
+					}
 				}
 			}
 			if (!match) return false;
@@ -216,12 +222,10 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 	/**
 	 * Bind params for single-holder dispatch. First tries declared ParamBinders; if a slot isn't provided by a binder,
-	 * it falls back to:
-	 * - TelemetryHolder injection
-	 * - @PullAttribute(name="...") / @PullAttribute("...") from holder.attributes()
-	 * - @PullContextValue(name="...") / @PullContextValue("...") from holder.getEventContext() (flow-scoped)
-	 * - @PullAllContextValues Map view of holder.getEventContext()
-	 * - @PullAllAttributes Map snapshot of holder.attributes().asMap()
+	 * it falls back to: - TelemetryHolder injection - @PullAttribute(name="...") / @PullAttribute("...") from
+	 * holder.attributes() - @PullContextValue(name="...") / @PullContextValue("...") from holder.getEventContext()
+	 * (flow-scoped) - @PullAllContextValues Map view of holder.getEventContext() - @PullAllAttributes Map snapshot of
+	 * holder.attributes().asMap()
 	 */
 	private static Object[] bindParams(Handler h, TelemetryHolder holder) {
 		List<ParamBinder> binders = h.binders();
@@ -277,7 +281,8 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 					// @PullAllAttributes Map snapshot of event attributes (unmodifiable)
 					if (val == null && p.isAnnotationPresent(PullAllAttributes.class)) {
-						val = Collections.unmodifiableMap(new LinkedHashMap<>(holder.attributes().asMap()));
+						val = Collections.unmodifiableMap(
+								new LinkedHashMap<>(holder.attributes().asMap()));
 					}
 				}
 			}
@@ -288,9 +293,9 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 	}
 
 	/**
-	 * Bind params for batch dispatch. Supports BatchBinder, optional TelemetryHolder (root/first) injection,
-	 * @PullAttribute/@PullContextValue sourced from the root holder, and
-	 * @PullAllContextValues/@PullAllAttributes from the root holder.
+	 * Bind params for batch dispatch. Supports BatchBinder, optional TelemetryHolder (root/first)
+	 * injection, @PullAttribute/@PullContextValue sourced from the root holder,
+	 * and @PullAllContextValues/@PullAllAttributes from the root holder.
 	 */
 	private static Object[] bindBatchParams(Handler h, List<TelemetryHolder> batch) {
 		List<ParamBinder> binders = h.binders();
@@ -346,7 +351,8 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 						val = Collections.unmodifiableMap(root.getEventContext());
 					}
 					if (val == null && p.isAnnotationPresent(PullAllAttributes.class)) {
-						val = Collections.unmodifiableMap(new LinkedHashMap<>(root.attributes().asMap()));
+						val = Collections.unmodifiableMap(
+								new LinkedHashMap<>(root.attributes().asMap()));
 					}
 				}
 			}
@@ -367,31 +373,11 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 	private static void logMissing(Handler h, TelemetryHolder holder, Lifecycle phase, List<String> missing) {
 		log.debug(
-			"Missing required attributes handler={} name={} phase={} missing={}",
-			h.id(),
-			holder.getName(),
-			phase,
-			missing);
-	}
-
-	// --- Compatibility shims for legacy callers (enqueue*) ---
-
-	/** @deprecated Use dispatch(Lifecycle.FLOW_STARTED, holder) */
-	@Deprecated
-	public void enqueueStart(TelemetryHolder holder) {
-		dispatch(Lifecycle.FLOW_STARTED, holder);
-	}
-
-	/** @deprecated Use dispatch(Lifecycle.FLOW_FINISHED, holder) */
-	@Deprecated
-	public void enqueueFinish(TelemetryHolder holder) {
-		dispatch(Lifecycle.FLOW_FINISHED, holder);
-	}
-
-	/** @deprecated Use dispatchRootFinished(List<TelemetryHolder>) */
-	@Deprecated
-	public void enqueueRootFinished(List<TelemetryHolder> batch) {
-		dispatchRootFinished(batch);
+				"Missing required attributes handler={} name={} phase={} missing={}",
+				h.id(),
+				holder.getName(),
+				phase,
+				missing);
 	}
 
 	/* ====== Small reflection helpers to support @AliasFor(name/value) on annotations ====== */

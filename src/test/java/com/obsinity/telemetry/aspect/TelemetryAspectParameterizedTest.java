@@ -52,7 +52,7 @@ class TelemetryAspectParameterizedTest {
 				new TestCase("doFlow", true),
 				new TestCase("doStep", false),
 				new TestCase("doStepAutoFlow", false),
-				new TestCase("doStepAutoFlowWWarn", false));
+				new TestCase("doStepAutoFlowWarn", false));
 	}
 
 	@ParameterizedTest(name = "{index} → {0}")
@@ -73,11 +73,11 @@ class TelemetryAspectParameterizedTest {
 		assertThat(out).isEqualTo("ok");
 
 		if (tc.isFlow) {
-			Mockito.verify(telemetryAspect, times(1)).interceptFlow(any(ProceedingJoinPoint.class), any(Flow.class));
-			Mockito.verify(telemetryAspect, times(0)).interceptStep(any(ProceedingJoinPoint.class), any(Step.class));
+			Mockito.verify(telemetryAspect, times(1)).interceptFlow(any(ProceedingJoinPoint.class));
+			Mockito.verify(telemetryAspect, times(0)).interceptStep(any(ProceedingJoinPoint.class));
 		} else {
-			Mockito.verify(telemetryAspect, times(1)).interceptStep(any(ProceedingJoinPoint.class), any(Step.class));
-			Mockito.verify(telemetryAspect, times(0)).interceptFlow(any(ProceedingJoinPoint.class), any(Flow.class));
+			Mockito.verify(telemetryAspect, times(1)).interceptStep(any(ProceedingJoinPoint.class));
+			Mockito.verify(telemetryAspect, times(0)).interceptFlow(any(ProceedingJoinPoint.class));
 		}
 	}
 
@@ -123,7 +123,7 @@ class TelemetryAspectParameterizedTest {
 
 		@Step(name = "doStep")
 		@OrphanAlert(level = OrphanAlert.Level.WARN)
-		public String doStepAutoFlowWWarn() {
+		public String doStepAutoFlowWarn() {
 			return "ok";
 		}
 	}
