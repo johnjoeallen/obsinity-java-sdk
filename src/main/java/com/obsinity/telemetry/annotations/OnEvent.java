@@ -27,13 +27,22 @@ import com.obsinity.telemetry.model.Lifecycle;
  * <h2>Other filters</h2>
  *
  * <ul>
- *   <li>{@link #lifecycle()} – restricts which {@link Lifecycle} phases the handler accepts (empty = any).
- *   <li>{@link #kinds()} – restricts accepted {@link SpanKind}s (empty = any). Null span kinds are treated as INTERNAL.
- *   <li>{@link #requireThrowable()} / {@link #throwableTypes()} / {@link #includeSubclasses()} – control invocation
- *       when a {@code Throwable} is present on the event.
- *   <li>{@link #messageRegex()} – optional regex matched against {@code Throwable.getMessage()} (if present).
- *   <li>{@link #causeType()} – optional fully-qualified class name; the throwable's {@code getCause()} must be an
- *       instance of this type for the handler to run.
+ *   <li>{@link #lifecycle()} – restricts which {@link Lifecycle} phases the handler accepts (empty = any).</li>
+ *   <li>{@link #kinds()} – restricts accepted {@link SpanKind}s (empty = any). Null span kinds are treated as INTERNAL.</li>
+ *   <li>{@link #throwableTypes()} / {@link #includeSubclasses()} – narrow which exception types (if any) this handler matches.</li>
+ *   <li>{@link #messageRegex()} – optional regex matched against {@code Throwable.getMessage()} (if present).</li>
+ *   <li>{@link #causeType()} – optional fully-qualified class name; the throwable's {@code getCause()} must
+ *       be an instance of this type for the handler to run.</li>
+ * </ul>
+ *
+ * <h2>Dispatch mode</h2>
+ * <p>
+ * {@link #mode()} controls when the handler runs relative to exception presence:
+ * </p>
+ * <ul>
+ *   <li>{@code NORMAL}: runs only when no exception is present (no {@code @BindEventException} param allowed).</li>
+ *   <li>{@code ERROR}: runs only when an exception is present (exactly one {@code @BindEventException} param required).</li>
+ *   <li>{@code ALWAYS}: runs regardless (exception param optional; at most one if present).</li>
  * </ul>
  *
  * <h2>Examples</h2>
@@ -49,13 +58,14 @@ import com.obsinity.telemetry.model.Lifecycle;
  *   name = "db.error",
  *   lifecycle = {Lifecycle.FLOW_FINISHED},
  *   kinds = {SpanKind.CLIENT},
- *   requireThrowable = true,
+ *   mode = DispatchMode.ERROR,
  *   throwableTypes = {java.sql.SQLException.class},
  *   includeSubclasses = true,
  *   messageRegex = "timeout|deadlock",
  *   causeType = "java.net.SocketTimeoutException"
  * )
- * public void onDbError(@PullAttribute("db.instance") String db) { ... }
+ * public void onDbError(@PullAttribute("db.instance") String db,
+ *                       @BindEventException java.sql.SQLException ex) { ... }
  * }</pre>
  */
 @Target(ElementType.METHOD)
@@ -86,8 +96,16 @@ public @interface OnEvent {
 	 */
 	String namePrefix() default "";
 
-	/** Lifecycle phases this handler accepts. Empty means "any". */
+	/**
+	 * Lifecycle phases this handler accepts. Empty means "any".
+	 */
 	Lifecycle[] lifecycle() default {};
+
+	/**
+	 * Controls when the handler runs relative to exception presence
+	 * and whether an exception parameter is allowed/required.
+	 */
+	DispatchMode mode() default DispatchMode.NORMAL;
 
 	/**
 	 * Span kinds this handler accepts. Empty means "any".
@@ -95,9 +113,6 @@ public @interface OnEvent {
 	 * <p>Null kinds are treated as {@link SpanKind#INTERNAL} by the dispatcher.
 	 */
 	SpanKind[] kinds() default {};
-
-	/** If true, a {@link Throwable} must be present on the event for the handler to be invoked. */
-	boolean requireThrowable() default false;
 
 	/**
 	 * Throwable types to match. Empty means "any type".
