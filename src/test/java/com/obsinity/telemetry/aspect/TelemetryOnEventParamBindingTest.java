@@ -58,7 +58,9 @@ class TelemetryOnEventParamBindingTest {
 	static record ComplexMeta(String ref, int weight) {}
 
 	@Configuration(proxyBeanMethods = false)
-	@EnableAutoConfiguration
+	@EnableAutoConfiguration(exclude = {
+		com.obsinity.telemetry.configuration.AutoConfiguration.class
+	})
 	@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
 	static class TestConfig {
 		@Bean

@@ -520,7 +520,7 @@ public class TelemetryHolder {
 	}
 
 	public Map<String, String> stringAttributes() {
-		Map<String, Object> src = (attributes != null ? attributes.asMap() : Map.of());
+		Map<String, Object> src = (attributes != null ? attributes.asMap() : new LinkedHashMap<>());
 		Map<String, String> out = new LinkedHashMap<>(src.size());
 		for (Map.Entry<String, Object> e : src.entrySet()) {
 			Object v = e.getValue();

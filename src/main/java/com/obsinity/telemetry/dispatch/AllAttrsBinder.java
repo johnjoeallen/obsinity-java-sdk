@@ -10,7 +10,7 @@ final class AllAttrsBinder implements ParamBinder {
 	@Override
 	public Object bind(TelemetryHolder holder) {
 		if (holder == null || holder.attributes() == null || holder.attributes().asMap() == null) {
-			return Map.of();
+			return new LinkedHashMap<>();
 		}
 		// Defensive copy so handlers can’t mutate the holder’s internal map
 		return new LinkedHashMap<>(holder.attributes().asMap());

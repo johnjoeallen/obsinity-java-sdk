@@ -11,6 +11,6 @@ public final class AllEventContextBinder implements ParamBinder {
 	public Object bind(TelemetryHolder holder) {
 		if (holder == null) return null;
 		Map<String, Object> src = holder.eventContext();
-		return (src == null) ? Map.of() : new LinkedHashMap<>(src);
+		return (src == null) ? new LinkedHashMap<>() : new LinkedHashMap<>(src);
 	}
 }

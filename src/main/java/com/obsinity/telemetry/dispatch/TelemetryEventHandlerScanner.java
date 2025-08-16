@@ -6,6 +6,8 @@ import java.util.*;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.util.ClassUtils;
@@ -18,35 +20,38 @@ import com.obsinity.telemetry.model.TelemetryHolder;
 /**
  * Groups handlers per @TelemetryEventHandler bean.
  *
- * - Validates signatures and binding rules (same as before).
+ * - Validates signatures and binding rules.
  * - Builds a per-bean structure: lifecycle → nameKey (exact or "") → { NORMAL | ALWAYS | ERROR } lists.
- * - Enforces that for any lifecycle used by the bean, a blank ("") selector exists;
- *   and (recommended) that a blank ERROR catch-all exists (Exception/Throwable binding).
+ * - Enforces that for any lifecycle used by the bean, a blank ("") selector exists (for dot-chop fallback).
+ * - Forbids declaring more than one **distinct method** as a blank ("") wildcard ERROR handler per handler class.
  */
 @Component
 public final class TelemetryEventHandlerScanner {
 
+	private static final Logger log = LoggerFactory.getLogger(TelemetryEventHandlerScanner.class);
+
 	/* -------------------- PUBLIC API -------------------- */
 
-	/** New: scan a single bean and return a grouped descriptor. */
+	/** Scan a single bean and return a grouped descriptor. */
 	public HandlerGroup scanGrouped(Object bean) {
 		Class<?> userClass = resolveUserClass(bean);
 		if (userClass == null || !userClass.isAnnotationPresent(TelemetryEventHandler.class)) {
 			return null; // not a handler bean
 		}
 
-		// Build flat Handler list (existing logic), then group per lifecycle/name/mode
+		// Build flat list, then group per lifecycle/name/mode
 		List<Handler> methods = scanFlat(bean, userClass);
 
 		Map<Lifecycle, Map<String, HandlerGroup.ModeBuckets>> index = new EnumMap<>(Lifecycle.class);
 		for (Lifecycle lc : Lifecycle.values()) index.put(lc, new LinkedHashMap<>());
 
-		// Track lifecycles used in this bean (for validation)
 		EnumSet<Lifecycle> lifecyclesUsed = EnumSet.noneOf(Lifecycle.class);
-		boolean hasBlankErrorCatchAll = false;
 
-		// For duplicate detection *per lifecycle + name + mode + signature*
+		// Duplicate detection within this class: (lifecycle|name|mode|signature)
 		Map<String, Method> seen = new LinkedHashMap<>();
+
+		// Track distinct blank ("") ERROR methods in this class (count at end!)
+		LinkedHashSet<Method> blankErrorMethodsInClass = new LinkedHashSet<>();
 
 		for (Handler h : methods) {
 			OnEvent on = h.method().getAnnotation(OnEvent.class);
@@ -59,10 +64,16 @@ public final class TelemetryEventHandlerScanner {
 				Map<String, HandlerGroup.ModeBuckets> byName = index.get(lc);
 				HandlerGroup.ModeBuckets bucket = byName.computeIfAbsent(nameKey, k -> new HandlerGroup.ModeBuckets());
 
-				// duplicate guard: lifecycle|name|mode|signature
+				// Duplicate guard: lifecycle|name|mode|signature (params included)
 				String dupeKey = lc + "|" + nameKey + "|" + modeOf(h) + "|" + signature(h.method());
 				Method prev = seen.putIfAbsent(dupeKey, h.method());
 				if (prev != null) {
+					// LOG the duplicate clearly before throwing
+					log.error(
+						"[Obsinity] Duplicate @OnEvent detected in {}  lifecycle={}  name='{}'  mode={}\n" +
+							"  • First : {}\n" +
+							"  • Dup   : {}",
+						userClass.getName(), lc, nameKey, modeOf(h), signature(prev), signature(h.method()));
 					throw new IllegalStateException("[Obsinity] Duplicate @OnEvent in "
 						+ userClass.getName()
 						+ " for lifecycle=" + lc + ", name='" + nameKey + "', mode=" + modeOf(h)
@@ -72,15 +83,9 @@ public final class TelemetryEventHandlerScanner {
 
 				if (h.isErrorMode()) {
 					bucket.error.add(h);
+					// Record distinct blank-error method once (not per lifecycle)
 					if (nameKey.isEmpty()) {
-						// check @BindEventThrowable param type is Exception/Throwable
-						boolean isCatchAll = h.binders().stream().anyMatch(b -> b instanceof ThrowableBinder);
-						if (isCatchAll) {
-							List<Class<? extends Throwable>> types = h.throwableTypes();
-							if (types == null || types.isEmpty()) {
-								hasBlankErrorCatchAll = true; // name="" + ERROR + no explicit types
-							}
-						}
+						blankErrorMethodsInClass.add(h.method());
 					}
 				} else if (h.isAlwaysMode()) {
 					bucket.always.add(h);
@@ -90,32 +95,33 @@ public final class TelemetryEventHandlerScanner {
 			}
 		}
 
-		// Validation: require a "" selector per lifecycle used
+		// Enforce at most one distinct blank ("") ERROR method per handler class
+		if (blankErrorMethodsInClass.size() > 1) {
+			StringBuilder sb = new StringBuilder();
+			for (Method m : blankErrorMethodsInClass) {
+				sb.append("\n  • ").append(signature(m));
+			}
+			log.error("[Obsinity] Multiple blank wildcard ERROR handlers found in {}:{}", userClass.getName(), sb);
+			throw new IllegalStateException("[Obsinity] Multiple blank wildcard ERROR handlers found in "
+				+ userClass.getName() + "; only one is allowed per handler class.");
+		}
+
+		// Require a "" selector per lifecycle used (for dot-chop fallback)
 		for (Lifecycle lc : lifecyclesUsed) {
 			Map<String, HandlerGroup.ModeBuckets> byName = index.get(lc);
 			if (!byName.containsKey("")) {
+				log.error("[Obsinity] Missing blank (\"\") selector in {} for lifecycle={} (required for dot-chop fallback).",
+					userClass.getName(), lc);
 				throw new IllegalStateException("[Obsinity] Missing blank (\"\") selector in "
 					+ userClass.getName() + " for lifecycle=" + lc
 					+ " (required to enable dot-chop fallback).");
 			}
 		}
 
-		// Recommended: ensure at least one blank ERROR catch-all somewhere in the bean
-		// If you want to make this hard-required, uncomment the guard below:
-        /*
-        if (!hasBlankErrorCatchAll && !lifecyclesUsed.isEmpty()) {
-            throw new IllegalStateException("[Obsinity] Missing catch-all ERROR handler (name=\"\", mode=ERROR, no explicit types)"
-                    + " in " + userClass.getName());
-        }
-        */
-
 		return new HandlerGroup(bean, index);
 	}
 
-	/**
-	 * Backwards-compatible: return flat handlers for a bean.
-	 * (Used internally by scanGrouped; safe to keep for any legacy call sites.)
-	 */
+	/** Back-compat: flat scan (used by scanGrouped). */
 	public List<Handler> scan(Object bean) {
 		Class<?> userClass = resolveUserClass(bean);
 		if (userClass == null || !userClass.isAnnotationPresent(TelemetryEventHandler.class)) {
@@ -124,7 +130,7 @@ public final class TelemetryEventHandlerScanner {
 		return scanFlat(bean, userClass);
 	}
 
-	/* -------------------- Internal: build flat Handler list (prior behavior) -------------------- */
+	/* -------------------- Internal: build flat Handler list -------------------- */
 
 	private List<Handler> scanFlat(Object bean, Class<?> userClass) {
 		List<Handler> out = new ArrayList<>();
@@ -150,7 +156,7 @@ public final class TelemetryEventHandlerScanner {
 				}
 			}
 
-			// Build binders & validate @BindEventThrowable rules
+			// Build binders & validate binding rules
 			List<ParamBinder> binders = new ArrayList<>();
 			int exceptionParamCount = 0;
 			Class<?> exceptionParamType = null;
@@ -162,10 +168,11 @@ public final class TelemetryEventHandlerScanner {
 				PullAllContextValues aec = p.getAnnotation(PullAllContextValues.class);
 
 				if (attr != null) {
-					String key = readAlias(attr);
+					String key = attr.name(); // require explicit name
 					boolean required = safeRequired(attr);
 					Function<Object, Object> conv = o -> coerce(o, p.getType());
 					binders.add(new AttrBinder(key, required, conv, p.getType()));
+
 				} else if (exAnn != null) {
 					Class<?> t = p.getType();
 					if (!Throwable.class.isAssignableFrom(t)) {
@@ -175,14 +182,17 @@ public final class TelemetryEventHandlerScanner {
 					exceptionParamCount++;
 					exceptionParamType = t;
 					binders.add(new ThrowableBinder(exAnn.required(), exAnn.source()));
+
 				} else if (ecp != null) {
-					binders.add(new EventContextBinder(readAlias(ecp), p.getType()));
+					binders.add(new EventContextBinder(ecp.name(), p.getType())); // require explicit name
+
 				} else if (aec != null) {
 					if (!Map.class.isAssignableFrom(p.getType())) {
 						throw new IllegalArgumentException("@PullAllContextValues parameter must be a Map: "
 							+ signature(userClass, m));
 					}
 					binders.add(new AllEventContextBinder());
+
 				} else if (List.class.isAssignableFrom(p.getType())) {
 					// only allowed for ROOT_FLOW_FINISHED
 					if (!onlyRootFinished(on.lifecycle())) {
@@ -191,8 +201,10 @@ public final class TelemetryEventHandlerScanner {
 								+ signature(userClass, m));
 					}
 					binders.add(new BatchBinder(p.getType()));
+
 				} else if (TelemetryHolder.class.isAssignableFrom(p.getType())) {
 					binders.add(new HolderBinder());
+
 				} else {
 					throw new IllegalArgumentException("Unsupported parameter binding on "
 						+ signature(userClass, m) + " for parameter: " + p);
@@ -203,7 +215,7 @@ public final class TelemetryEventHandlerScanner {
 
 			List<Class<? extends Throwable>> types = List.of(on.throwableTypes());
 			String exact = on.name().isBlank() ? (on.value().isBlank() ? null : on.value()) : on.name();
-			String namePrefix = null; // prefix support removed per new spec
+			String namePrefix = null; // prefix support removed
 
 			String id = userClass.getSimpleName() + "#" + m.getName();
 
@@ -213,7 +225,7 @@ public final class TelemetryEventHandlerScanner {
 				types, on.includeSubclasses(),
 				msgPat, causeType,
 				List.copyOf(binders),
-				Set.of(), // required attrs collected elsewhere if needed
+				Set.of(), // required attrs (if any) could be added separately
 				id
 			));
 		}
@@ -324,46 +336,8 @@ public final class TelemetryEventHandlerScanner {
 	private static boolean safeRequired(PullAttribute attr) {
 		try {
 			return (boolean) PullAttribute.class.getMethod("required").invoke(attr);
-		} catch (ReflectiveOperationException ignore) { return false; }
-	}
-
-// --- Put these private helpers near the bottom of TelemetryEventHandlerScanner ---
-
-	/** Prefer name() if present & non-blank; else value(); else null. */
-	private static String readAlias(PullAttribute ann) {
-		String key = invokeIfPresent(ann, "name");
-		if (key == null || key.isBlank()) key = invokeIfPresent(ann, "value");
-		return (key == null ? null : key);
-	}
-
-	/** Prefer name() if present & non-blank; else value(); else null. */
-	private static String readAlias(PullContextValue ann) {
-		String key = invokeIfPresent(ann, "name");
-		if (key == null || key.isBlank()) key = invokeIfPresent(ann, "value");
-		return (key == null ? null : key);
-	}
-
-	/** Safely invoke an element on the annotation if it exists; return null on any issue. */
-	private static String invokeIfPresent(Object ann, String method) {
-		try {
-			var m = ann.getClass().isAnnotation()
-				? ((Class<?>) ann).getMethod(method) // defensive, in case a Class is passed
-				: ann.getClass().getMethod(method);  // runtime type (works with proxies)
-			Object v = m.invoke(ann);
-			return (v instanceof String s) ? s : null;
-		} catch (NoSuchMethodException e) {
-			try {
-				// Try via annotationType() for real annotation instances/proxies
-				var m2 = ann.getClass().getMethod("annotationType");
-				Class<?> at = (Class<?>) m2.invoke(ann);
-				var el = at.getMethod(method);
-				Object v = el.invoke(ann);
-				return (v instanceof String s) ? s : null;
-			} catch (Exception ignored) {
-				return null;
-			}
-		} catch (Exception e) {
-			return null;
+		} catch (ReflectiveOperationException ignore) {
+			return false;
 		}
 	}
 }

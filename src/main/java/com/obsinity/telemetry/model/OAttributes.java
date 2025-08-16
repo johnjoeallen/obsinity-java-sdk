@@ -16,7 +16,13 @@ public final class OAttributes {
 	private final Map<String, Object> asMap;
 
 	public OAttributes(Map<String, Object> asMap) {
-		this.asMap = (asMap != null ? asMap : new LinkedHashMap<>());
+		if (asMap != null) {
+			this.asMap = new LinkedHashMap<>(asMap);
+		}
+		else {
+			this.asMap = new LinkedHashMap<>();
+
+		}
 	}
 
 	public Map<String, Object> asMap() {

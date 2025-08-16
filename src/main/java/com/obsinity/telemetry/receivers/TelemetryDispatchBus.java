@@ -6,6 +6,7 @@ import java.lang.reflect.Parameter;
 import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.stereotype.Component;
 
@@ -24,19 +25,31 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 	public TelemetryDispatchBus(ListableBeanFactory beanFactory, TelemetryEventHandlerScanner scanner) {
 		Collection<Object> beans = beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
-		List<HandlerGroup> out = new ArrayList<>();
+
+		// De-dup by underlying user class to avoid double registration (proxy + target)
+		Map<Class<?>, HandlerGroup> uniq = new LinkedHashMap<>();
 		for (Object bean : beans) {
 			HandlerGroup g = scanner.scanGrouped(bean);
-			if (g != null) out.add(g);
+			if (g == null) continue;
+
+			Class<?> userClass = resolveUserClass(bean);
+			HandlerGroup prev = uniq.putIfAbsent(userClass, g);
+			if (prev != null) {
+				log.warn("[Obsinity] Skipping duplicate @TelemetryEventHandler for userClass={} "
+						+ "(kept {}, dropped {})",
+					userClass.getName(),
+					describeBean(prev.bean()),
+					describeBean(bean));
+			}
 		}
-		this.groups = List.copyOf(out);
-		log.info("TelemetryDispatchBus registered {} handler beans", groups.size());
+		this.groups = List.copyOf(uniq.values());
+		log.info("TelemetryDispatchBus registered {} handler beans (from {} discovered beans)",
+			groups.size(), beans.size());
 	}
 
 	@Override
 	public void dispatch(Lifecycle phase, TelemetryHolder holder) {
 		if (holder == null) return;
-
 		final Throwable t = holder.getThrowable();
 
 		for (HandlerGroup g : groups) {
@@ -44,6 +57,7 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 			if (bucket == null) continue;
 
 			if (t != null) {
+				// ERROR: pick best, then ALWAYS
 				Handler best = selectBestError(bucket.error, holder, phase, t);
 				if (best != null) {
 					invokeHandler(best, holder, phase);
@@ -53,6 +67,7 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				}
 				runAlways(bucket.always, holder, phase, t);
 			} else {
+				// NORMAL path: NORMAL then ALWAYS
 				runNormal(bucket.normal, holder, phase);
 				runAlways(bucket.always, holder, phase, null);
 			}
@@ -65,7 +80,7 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 		for (HandlerGroup g : groups) {
 			Map<String, HandlerGroup.ModeBuckets> byName =
-				g.index().getOrDefault(Lifecycle.ROOT_FLOW_FINISHED, Map.of());
+				g.index().getOrDefault(Lifecycle.ROOT_FLOW_FINISHED, new LinkedHashMap<>());
 			for (HandlerGroup.ModeBuckets b : new LinkedHashSet<>(byName.values())) {
 				for (Handler h : concat(b.normal, b.always, b.error)) {
 					boolean batchCapable = h.binders().stream().anyMatch(bb -> bb instanceof BatchBinder);
@@ -87,10 +102,10 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		}
 	}
 
-	/* ------------- per-group name fallback ------------- */
+	/* -------- name fallback per handler group: exact → chop → "" -------- */
 
 	private HandlerGroup.ModeBuckets findBucket(HandlerGroup g, Lifecycle lc, String eventName) {
-		Map<String, HandlerGroup.ModeBuckets> byName = g.index().getOrDefault(lc, Map.of());
+		Map<String, HandlerGroup.ModeBuckets> byName = g.index().getOrDefault(lc, new LinkedHashMap<>());
 		String probe = (eventName == null ? "" : eventName);
 		while (true) {
 			HandlerGroup.ModeBuckets b = byName.get(probe);
@@ -101,7 +116,7 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		}
 	}
 
-	/* ------------- selection & execution helpers ------------- */
+	/* -------- selection & execution helpers -------- */
 
 	private Handler selectBestError(List<Handler> candidates, TelemetryHolder holder, Lifecycle phase, Throwable t) {
 		if (candidates == null || candidates.isEmpty()) return null;
@@ -189,7 +204,7 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		return (kind == null) ? SpanKind.INTERNAL : kind;
 	}
 
-	/* -------- binding/invocation (unchanged) -------- */
+	/* -------- binding/invocation -------- */
 
 	private boolean invokeHandler(Handler h, TelemetryHolder holder, Lifecycle phase) {
 		final Object[] args;
@@ -350,5 +365,18 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		List<T> all = new ArrayList<>();
 		for (List<T> l : lists) if (l != null) all.addAll(l);
 		return all;
+	}
+
+	private static Class<?> resolveUserClass(Object bean) {
+		if (bean == null) return null;
+		if (AopUtils.isAopProxy(bean)) {
+			Class<?> target = AopUtils.getTargetClass(bean);
+			if (target != null) return org.springframework.util.ClassUtils.getUserClass(target);
+		}
+		return org.springframework.util.ClassUtils.getUserClass(bean.getClass());
+	}
+
+	private static String describeBean(Object bean) {
+		return bean.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(bean));
 	}
 }

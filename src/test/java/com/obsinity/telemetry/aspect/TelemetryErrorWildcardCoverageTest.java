@@ -16,10 +16,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.*;
-import org.springframework.context.annotation.Configuration;
 
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -36,30 +34,42 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 )
 class TelemetryErrorWildcardCoverageTest {
 
-	@Configuration
-	@EnableAutoConfiguration
+	@Configuration(proxyBeanMethods = false)
 	@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
 	static class CoverageConfig {
 
-		@Bean com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
+		@Bean
+		com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
 			return new com.fasterxml.jackson.databind.ObjectMapper();
 		}
 
-		@Bean AttributeParamExtractor attributeParamExtractor() { return new AttributeParamExtractor(); }
+		@Bean
+		AttributeParamExtractor attributeParamExtractor() { return new AttributeParamExtractor(); }
 
-		@Bean TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor ex) {
+		@Bean
+		TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor ex) {
 			return new TelemetryAttributeBinder(ex);
 		}
 
-		@Bean TelemetryProcessorSupport telemetryProcessorSupport() { return new TelemetryProcessorSupport(); }
+		@Bean
+		TelemetryProcessorSupport telemetryProcessorSupport() { return new TelemetryProcessorSupport(); }
 
-		@Bean TelemetryEventHandlerScanner telemetryEventHandlerScanner() { return new TelemetryEventHandlerScanner(); }
+		@Bean
+		TelemetryEventHandlerScanner telemetryEventHandlerScanner() { return new TelemetryEventHandlerScanner(); }
 
-		@Bean TelemetryDispatchBus telemetryDispatchBus(ListableBeanFactory bf, TelemetryEventHandlerScanner sc) {
+		@Bean
+		TelemetryDispatchBus telemetryDispatchBus(ListableBeanFactory bf, TelemetryEventHandlerScanner sc) {
 			return new TelemetryDispatchBus(bf, sc);
 		}
 
-		@Bean TelemetryProcessor telemetryProcessor(
+		// ✅ Missing bean added: ErrFlows requires a TelemetryContext
+		@Bean
+		TelemetryContext telemetryContext(TelemetryProcessorSupport support) {
+			return new TelemetryContext(support);
+		}
+
+		@Bean
+		TelemetryProcessor telemetryProcessor(
 			TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
 			return new TelemetryProcessor(binder, support, bus) {
 				@Override
@@ -73,7 +83,9 @@ class TelemetryErrorWildcardCoverageTest {
 			};
 		}
 
-		@Bean TelemetryAspect telemetryAspect(TelemetryProcessor p) { return new TelemetryAspect(p); }
+		// Unique bean name to avoid collisions in other test contexts
+		@Bean(name = "telemetryAspect_wildcardTest")
+		TelemetryAspect telemetryAspect(TelemetryProcessor p) { return new TelemetryAspect(p); }
 
 		@Bean ErrFlows flows(TelemetryContext ctx) { return new ErrFlows(ctx); }
 
@@ -130,6 +142,9 @@ class TelemetryErrorWildcardCoverageTest {
 	@TelemetryEventHandler
 	static class NormalReceivers {
 		final List<TelemetryHolder> normals = new CopyOnWriteArrayList<>();
+
+		@OnEvent(lifecycle = {Lifecycle.FLOW_FINISHED})
+		public void onUnhandled(TelemetryHolder h) { normals.add(h); }
 
 		@OnEvent(name = "err.alpha", lifecycle = {Lifecycle.FLOW_FINISHED})
 		public void onAlpha(TelemetryHolder h) { normals.add(h); }

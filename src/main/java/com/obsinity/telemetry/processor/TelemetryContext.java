@@ -1,26 +1,21 @@
 package com.obsinity.telemetry.processor;
 
 import java.util.Map;
+import java.util.Objects;
 
 import org.springframework.stereotype.Component;
 
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /**
- * Provides application code with a simple API for adding telemetry data to the <b>current TelemetryHolder</b> (flow
- * holder or the temporary step holder).
- *
- * <p>What you can write:
+ * Facade for writing to the <b>current TelemetryHolder</b> (flow or step).
  *
  * <ul>
- *   <li><b>Attributes</b> (persisted): {@link #putAttr(String, Object)} and {@link #putAllAttrs(Map)}. Always written
- *       to the current holder's {@link TelemetryHolder#attributes()}.
- *   <li><b>EventContext</b> (ephemeral, non-serialized): {@link #putContext(String, Object)} and
- *       {@link #putAllContext(Map)}. Always written to the current holder's {@link TelemetryHolder#eventContext()}.
+ *   <li><b>Attributes</b> (persisted): {@link #putAttr(String, Object)} / {@link #putAllAttrs(Map)}
+ *       — written to {@link TelemetryHolder#attributes()}.</li>
+ *   <li><b>EventContext</b> (ephemeral): {@link #putContext(String, Object)} / {@link #putAllContext(Map)}
+ *       — written to {@link TelemetryHolder#getEventContext()}.</li>
  * </ul>
- *
- * <p>For steps, the processor will fold the step holder into a parent event after completion, carrying over both
- * attributes and context into the resulting {@code OEvent}.
  */
 @Component
 public class TelemetryContext {
@@ -28,7 +23,7 @@ public class TelemetryContext {
 	private final TelemetryProcessorSupport support;
 
 	public TelemetryContext(TelemetryProcessorSupport support) {
-		this.support = support;
+		this.support = Objects.requireNonNull(support, "TelemetryProcessorSupport must not be null");
 	}
 
 	/* ===================== Attributes (persisted) ===================== */
@@ -60,18 +55,20 @@ public class TelemetryContext {
 		if (holder == null) return;
 
 		map.forEach((k, v) -> {
-			if (k != null && !k.isBlank()) holder.attributes().put(k, v);
+			if (k != null && !k.isBlank()) {
+				holder.attributes().put(k, v);
+			}
 		});
 	}
 
-	/* ===================== EventContext (ephemeral, non-serialized) ===================== */
+	/* ===================== EventContext (ephemeral) ===================== */
 
 	/** Adds a single <b>EventContext</b> entry to the current holder and returns the same typed value. */
 	public <T> T putContext(String key, T value) {
 		if (key == null || key.isBlank()) return value;
 		TelemetryHolder holder = support.currentHolder();
 		if (holder != null) {
-			holder.eventContext().put(key, value);
+			holder.getEventContext().put(key, value);
 		}
 		return value;
 	}
@@ -83,7 +80,9 @@ public class TelemetryContext {
 		if (holder == null) return;
 
 		map.forEach((k, v) -> {
-			if (k != null && !k.isBlank()) holder.eventContext().put(k, v);
+			if (k != null && !k.isBlank()) {
+				holder.getEventContext().put(k, v);
+			}
 		});
 	}
 }
