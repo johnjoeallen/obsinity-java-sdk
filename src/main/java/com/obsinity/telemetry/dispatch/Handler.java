@@ -36,14 +36,19 @@ public record Handler(
 	}
 
 	/** Name match rules (in order): exactName > namePrefix > no constraint. */
-	public boolean nameMatches(String name) {
-		if (exactName != null && !exactName.isEmpty()) {
-			return exactName.equals(name);
+	public boolean nameMatches(String eventName) {
+		// Exact name takes precedence when present and non-empty
+		if (this.exactName != null && !this.exactName.isEmpty()) {
+			return this.exactName.equals(eventName);
 		}
-		if (namePrefix != null && !namePrefix.isEmpty()) {
-			return name != null && name.startsWith(namePrefix);
+
+		// Prefix match: treat null OR empty string as wildcard (match everything)
+		if (this.namePrefix == null || this.namePrefix.isEmpty()) {
+			return true;
 		}
-		return true; // no constraint
+
+		// Normal prefix check
+		return eventName != null && eventName.startsWith(this.namePrefix);
 	}
 
 	/** Convenience flags for dispatch logic. */

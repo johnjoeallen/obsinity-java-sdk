@@ -21,6 +21,7 @@ import com.obsinity.telemetry.model.Lifecycle;
  *   <li><b>Prefix match:</b> set {@link #namePrefix()}, e.g. {@code namePrefix="db.query."} to match
  *       {@code db.query.select}, {@code db.query.insert}, etc.
  *   <li>If both are provided, <b>exact</b> takes precedence over <b>prefix</b>.
+ *   <li>{@link #nameRegex()} is deprecated and ignored by new scanners.
  * </ul>
  *
  * <h2>Other filters</h2>
