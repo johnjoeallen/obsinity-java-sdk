@@ -43,28 +43,33 @@ public class LoggingTelemetryEventHandler {
 	@OnEvent(mode = DispatchMode.ERROR)
 	public void onAnyError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
 		// Keeping it simple; presence satisfies validation. Optional: log the error.
-		log.warn(
-				"Telemetry ERROR event: name={} traceId={} spanId={} ex={}",
-				holder.name(),
-				holder.traceId(),
-				holder.spanId(),
-				ex.toString());
+		if (log.isWarnEnabled()) {
+			log.warn(
+					"Telemetry ERROR event: name={} traceId={} spanId={} ex={}",
+					holder.name(),
+					holder.traceId(),
+					holder.spanId(),
+					ex.toString());
+		}
 	}
 
 	@OnEvent(lifecycle = {Lifecycle.FLOW_STARTED})
 	public void onFlowStarted(TelemetryHolder h) {
 		if (h == null) return;
-		log.info(
-				"obsinity flow-start name={} kind={} traceId={} spanId={} parentSpanId={} serviceId={} correlationId={}",
-				safe(h.name()),
-				safe(h.kind()),
-				safe(h.traceId()),
-				safe(h.spanId()),
-				safe(h.parentSpanId()),
-				safe(h.serviceId()),
-				safe(h.correlationId()));
-		if (log.isDebugEnabled()) {
-			log.debug("flow-start payload:\n{}", toJson(h));
+
+		if (log.isInfoEnabled()) {
+			log.info(
+					"obsinity flow-start name={} kind={} traceId={} spanId={} parentSpanId={} serviceId={} correlationId={}",
+					safe(h.name()),
+					safe(h.kind()),
+					safe(h.traceId()),
+					safe(h.spanId()),
+					safe(h.parentSpanId()),
+					safe(h.serviceId()),
+					safe(h.correlationId()));
+			if (log.isDebugEnabled()) {
+				log.debug("flow-start payload:\n{}", toJson(h));
+			}
 		}
 	}
 

@@ -18,10 +18,8 @@ public final class OAttributes {
 	public OAttributes(Map<String, Object> asMap) {
 		if (asMap != null) {
 			this.asMap = new LinkedHashMap<>(asMap);
-		}
-		else {
+		} else {
 			this.asMap = new LinkedHashMap<>();
-
 		}
 	}
 
@@ -56,7 +54,7 @@ public final class OAttributes {
 		else if (v instanceof Long l) b.put(AttributeKey.longKey(k), l);
 		else if (v instanceof Float f) b.put(AttributeKey.doubleKey(k), f.doubleValue());
 		else if (v instanceof Double d) b.put(AttributeKey.doubleKey(k), d);
-		else if (v instanceof List<?> list && list.stream().allMatch(x -> x instanceof String)) {
+		else if (v instanceof List<?> list && list.stream().allMatch(String.class::isInstance)) {
 			@SuppressWarnings("unchecked")
 			List<String> ss = (List<String>) list;
 			b.put(AttributeKey.stringArrayKey(k), ss);

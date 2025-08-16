@@ -12,8 +12,6 @@ import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,9 +56,7 @@ class TelemetryOnEventParamBindingTest {
 	static record ComplexMeta(String ref, int weight) {}
 
 	@Configuration(proxyBeanMethods = false)
-	@EnableAutoConfiguration(exclude = {
-		com.obsinity.telemetry.configuration.AutoConfiguration.class
-	})
+	@EnableAutoConfiguration(exclude = {com.obsinity.telemetry.configuration.AutoConfiguration.class})
 	@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
 	static class TestConfig {
 		@Bean

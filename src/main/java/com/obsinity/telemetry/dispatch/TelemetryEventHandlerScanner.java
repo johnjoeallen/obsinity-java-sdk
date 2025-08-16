@@ -2,7 +2,16 @@ package com.obsinity.telemetry.dispatch;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.BitSet;
+import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
@@ -13,17 +22,23 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.ClassUtils;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.*;
+import com.obsinity.telemetry.annotations.BindEventThrowable;
+import com.obsinity.telemetry.annotations.DispatchMode;
+import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.PullAllContextValues;
+import com.obsinity.telemetry.annotations.PullAttribute;
+import com.obsinity.telemetry.annotations.PullContextValue;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /**
  * Groups handlers per @TelemetryEventHandler bean.
  *
- * - Validates signatures and binding rules.
- * - Builds a per-bean structure: lifecycle → nameKey (exact or "") → { NORMAL | ALWAYS | ERROR } lists.
- * - Enforces that for any lifecycle used by the bean, a blank ("") selector exists (for dot-chop fallback).
- * - Forbids declaring more than one **distinct method** as a blank ("") wildcard ERROR handler per handler class.
+ * <p>- Validates signatures and binding rules. - Builds a per-bean structure: lifecycle → nameKey (exact or "") → {
+ * NORMAL | ALWAYS | ERROR } lists. - Enforces that for any lifecycle used by the bean, a blank ("") selector exists
+ * (for dot-chop fallback). - Forbids declaring more than one **distinct method** as a blank ("") wildcard ERROR handler
+ * per handler class.
  */
 @Component
 public final class TelemetryEventHandlerScanner {
@@ -70,15 +85,20 @@ public final class TelemetryEventHandlerScanner {
 				if (prev != null) {
 					// LOG the duplicate clearly before throwing
 					log.error(
-						"[Obsinity] Duplicate @OnEvent detected in {}  lifecycle={}  name='{}'  mode={}\n" +
-							"  • First : {}\n" +
-							"  • Dup   : {}",
-						userClass.getName(), lc, nameKey, modeOf(h), signature(prev), signature(h.method()));
+							"[Obsinity] Duplicate @OnEvent detected in {}  lifecycle={}  name='{}'  mode={}\n"
+									+ "  • First : {}\n"
+									+ "  • Dup   : {}",
+							userClass.getName(),
+							lc,
+							nameKey,
+							modeOf(h),
+							signature(prev),
+							signature(h.method()));
 					throw new IllegalStateException("[Obsinity] Duplicate @OnEvent in "
-						+ userClass.getName()
-						+ " for lifecycle=" + lc + ", name='" + nameKey + "', mode=" + modeOf(h)
-						+ " — already declared by " + signature(prev)
-						+ ", duplicate: " + signature(h.method()));
+							+ userClass.getName()
+							+ " for lifecycle=" + lc + ", name='" + nameKey + "', mode=" + modeOf(h)
+							+ " — already declared by " + signature(prev)
+							+ ", duplicate: " + signature(h.method()));
 				}
 
 				if (h.isErrorMode()) {
@@ -103,18 +123,20 @@ public final class TelemetryEventHandlerScanner {
 			}
 			log.error("[Obsinity] Multiple blank wildcard ERROR handlers found in {}:{}", userClass.getName(), sb);
 			throw new IllegalStateException("[Obsinity] Multiple blank wildcard ERROR handlers found in "
-				+ userClass.getName() + "; only one is allowed per handler class.");
+					+ userClass.getName() + "; only one is allowed per handler class.");
 		}
 
 		// Require a "" selector per lifecycle used (for dot-chop fallback)
 		for (Lifecycle lc : lifecyclesUsed) {
 			Map<String, HandlerGroup.ModeBuckets> byName = index.get(lc);
 			if (!byName.containsKey("")) {
-				log.error("[Obsinity] Missing blank (\"\") selector in {} for lifecycle={} (required for dot-chop fallback).",
-					userClass.getName(), lc);
+				log.error(
+						"[Obsinity] Missing blank (\"\") selector in {} for lifecycle={} (required for dot-chop fallback).",
+						userClass.getName(),
+						lc);
 				throw new IllegalStateException("[Obsinity] Missing blank (\"\") selector in "
-					+ userClass.getName() + " for lifecycle=" + lc
-					+ " (required to enable dot-chop fallback).");
+						+ userClass.getName() + " for lifecycle=" + lc
+						+ " (required to enable dot-chop fallback).");
 			}
 		}
 
@@ -142,7 +164,7 @@ public final class TelemetryEventHandlerScanner {
 			validateNameSelectors(on, m);
 
 			BitSet lifecycleMask = bitset(on.lifecycle(), Lifecycle.values().length, Lifecycle::ordinal);
-			BitSet kindMask      = bitset(on.kinds(),     SpanKind.values().length,  SpanKind::ordinal);
+			BitSet kindMask = bitset(on.kinds(), SpanKind.values().length, SpanKind::ordinal);
 
 			Pattern msgPat = on.messageRegex().isBlank() ? null : Pattern.compile(on.messageRegex());
 
@@ -151,8 +173,8 @@ public final class TelemetryEventHandlerScanner {
 				try {
 					causeType = ClassUtils.resolveClassName(on.causeType(), userClass.getClassLoader());
 				} catch (IllegalArgumentException e) {
-					throw new IllegalArgumentException("@OnEvent causeType not found: "
-						+ on.causeType() + " on " + signature(userClass, m));
+					throw new IllegalArgumentException(
+							"@OnEvent causeType not found: " + on.causeType() + " on " + signature(userClass, m));
 				}
 			}
 
@@ -176,8 +198,8 @@ public final class TelemetryEventHandlerScanner {
 				} else if (exAnn != null) {
 					Class<?> t = p.getType();
 					if (!Throwable.class.isAssignableFrom(t)) {
-						throw new IllegalArgumentException("@BindEventThrowable parameter must be a Throwable: "
-							+ signature(userClass, m));
+						throw new IllegalArgumentException(
+								"@BindEventThrowable parameter must be a Throwable: " + signature(userClass, m));
 					}
 					exceptionParamCount++;
 					exceptionParamType = t;
@@ -188,8 +210,8 @@ public final class TelemetryEventHandlerScanner {
 
 				} else if (aec != null) {
 					if (!Map.class.isAssignableFrom(p.getType())) {
-						throw new IllegalArgumentException("@PullAllContextValues parameter must be a Map: "
-							+ signature(userClass, m));
+						throw new IllegalArgumentException(
+								"@PullAllContextValues parameter must be a Map: " + signature(userClass, m));
 					}
 					binders.add(new AllEventContextBinder());
 
@@ -197,8 +219,8 @@ public final class TelemetryEventHandlerScanner {
 					// only allowed for ROOT_FLOW_FINISHED
 					if (!onlyRootFinished(on.lifecycle())) {
 						throw new IllegalArgumentException(
-							"List<TelemetryHolder> parameters are only allowed for lifecycle=ROOT_FLOW_FINISHED on "
-								+ signature(userClass, m));
+								"List<TelemetryHolder> parameters are only allowed for lifecycle=ROOT_FLOW_FINISHED on "
+										+ signature(userClass, m));
 					}
 					binders.add(new BatchBinder(p.getType()));
 
@@ -206,8 +228,8 @@ public final class TelemetryEventHandlerScanner {
 					binders.add(new HolderBinder());
 
 				} else {
-					throw new IllegalArgumentException("Unsupported parameter binding on "
-						+ signature(userClass, m) + " for parameter: " + p);
+					throw new IllegalArgumentException(
+							"Unsupported parameter binding on " + signature(userClass, m) + " for parameter: " + p);
 				}
 			}
 
@@ -220,14 +242,20 @@ public final class TelemetryEventHandlerScanner {
 			String id = userClass.getSimpleName() + "#" + m.getName();
 
 			out.add(new Handler(
-				bean, m, exact, namePrefix,
-				lifecycleMask, kindMask, on.mode(),
-				types, on.includeSubclasses(),
-				msgPat, causeType,
-				List.copyOf(binders),
-				Set.of(), // required attrs (if any) could be added separately
-				id
-			));
+					bean,
+					m,
+					exact,
+					namePrefix,
+					lifecycleMask,
+					kindMask,
+					on.mode(),
+					types,
+					on.includeSubclasses(),
+					msgPat,
+					causeType,
+					List.copyOf(binders),
+					Set.of(), // required attrs (if any) could be added separately
+					id));
 		}
 
 		return out;
@@ -243,13 +271,13 @@ public final class TelemetryEventHandlerScanner {
 
 	private static String nameKeyOf(OnEvent on) {
 		if (on == null) return "";
-		if (!on.name().isBlank())  return on.name();
+		if (!on.name().isBlank()) return on.name();
 		if (!on.value().isBlank()) return on.value();
 		return "";
 	}
 
 	private static String modeOf(Handler h) {
-		if (h.isErrorMode())  return "ERROR";
+		if (h.isErrorMode()) return "ERROR";
 		if (h.isAlwaysMode()) return "ALWAYS";
 		return "NORMAL";
 	}
@@ -269,43 +297,44 @@ public final class TelemetryEventHandlerScanner {
 		boolean hasPrefix = !on.namePrefix().isBlank();
 		if (hasExact && hasPrefix) {
 			throw new IllegalArgumentException("@OnEvent cannot set both name/name(value) and namePrefix on "
-				+ signature(m.getDeclaringClass(), m));
+					+ signature(m.getDeclaringClass(), m));
 		}
 		if (hasPrefix) {
-			throw new IllegalArgumentException("@OnEvent(namePrefix=...) is no longer supported on "
-				+ signature(m.getDeclaringClass(), m));
+			throw new IllegalArgumentException(
+					"@OnEvent(namePrefix=...) is no longer supported on " + signature(m.getDeclaringClass(), m));
 		}
 	}
 
 	private static void validateModeAndExceptionParams(
-		DispatchMode mode, int exceptionParamCount, Class<?> exceptionParamType,
-		Class<?> userClass, Method m) {
+			DispatchMode mode, int exceptionParamCount, Class<?> exceptionParamType, Class<?> userClass, Method m) {
 		switch (mode) {
 			case NORMAL -> {
 				if (exceptionParamCount > 0) {
-					throw new IllegalArgumentException("@OnEvent(mode=NORMAL) must not declare @BindEventThrowable on "
-						+ signature(userClass, m));
+					throw new IllegalArgumentException(
+							"@OnEvent(mode=NORMAL) must not declare @BindEventThrowable on " + signature(userClass, m));
 				}
 			}
 			case ERROR -> {
 				if (exceptionParamCount != 1) {
-					throw new IllegalArgumentException("@OnEvent(mode=ERROR) must declare exactly one @BindEventThrowable on "
-						+ signature(userClass, m));
+					throw new IllegalArgumentException(
+							"@OnEvent(mode=ERROR) must declare exactly one @BindEventThrowable on "
+									+ signature(userClass, m));
 				}
 				if (exceptionParamType == null || !Throwable.class.isAssignableFrom(exceptionParamType)) {
-					throw new IllegalArgumentException("@BindEventThrowable must be a Throwable type on "
-						+ signature(userClass, m));
+					throw new IllegalArgumentException(
+							"@BindEventThrowable must be a Throwable type on " + signature(userClass, m));
 				}
 			}
 			case ALWAYS -> {
 				if (exceptionParamCount > 1) {
-					throw new IllegalArgumentException("@OnEvent(mode=ALWAYS) may declare at most one @BindEventThrowable on "
-						+ signature(userClass, m));
+					throw new IllegalArgumentException(
+							"@OnEvent(mode=ALWAYS) may declare at most one @BindEventThrowable on "
+									+ signature(userClass, m));
 				}
 				if (exceptionParamCount == 1
-					&& (exceptionParamType == null || !Throwable.class.isAssignableFrom(exceptionParamType))) {
-					throw new IllegalArgumentException("@BindEventThrowable must be a Throwable type on "
-						+ signature(userClass, m));
+						&& (exceptionParamType == null || !Throwable.class.isAssignableFrom(exceptionParamType))) {
+					throw new IllegalArgumentException(
+							"@BindEventThrowable must be a Throwable type on " + signature(userClass, m));
 				}
 			}
 			default -> throw new IllegalArgumentException("Unknown DispatchMode on " + signature(userClass, m));
@@ -322,6 +351,7 @@ public final class TelemetryEventHandlerScanner {
 	private static String signature(Class<?> c, Method m) {
 		return c.getName() + "." + m.getName() + Arrays.toString(m.getParameterTypes());
 	}
+
 	private static String signature(Method m) {
 		return m.getDeclaringClass().getName() + "." + m.getName() + Arrays.toString(m.getParameterTypes());
 	}

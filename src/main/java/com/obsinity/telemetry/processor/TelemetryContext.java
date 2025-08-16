@@ -11,10 +11,10 @@ import com.obsinity.telemetry.model.TelemetryHolder;
  * Facade for writing to the <b>current TelemetryHolder</b> (flow or step).
  *
  * <ul>
- *   <li><b>Attributes</b> (persisted): {@link #putAttr(String, Object)} / {@link #putAllAttrs(Map)}
- *       — written to {@link TelemetryHolder#attributes()}.</li>
- *   <li><b>EventContext</b> (ephemeral): {@link #putContext(String, Object)} / {@link #putAllContext(Map)}
- *       — written to {@link TelemetryHolder#getEventContext()}.</li>
+ *   <li><b>Attributes</b> (persisted): {@link #putAttr(String, Object)} / {@link #putAllAttrs(Map)} — written to
+ *       {@link TelemetryHolder#attributes()}.
+ *   <li><b>EventContext</b> (ephemeral): {@link #putContext(String, Object)} / {@link #putAllContext(Map)} — written to
+ *       {@link TelemetryHolder#getEventContext()}.
  * </ul>
  */
 @Component

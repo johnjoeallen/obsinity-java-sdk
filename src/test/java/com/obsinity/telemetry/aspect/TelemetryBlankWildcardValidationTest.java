@@ -1,5 +1,11 @@
 package com.obsinity.telemetry.aspect;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.context.support.GenericApplicationContext;
+
 import com.obsinity.telemetry.annotations.BindEventThrowable;
 import com.obsinity.telemetry.annotations.DispatchMode;
 import com.obsinity.telemetry.annotations.OnEvent;
@@ -10,11 +16,6 @@ import com.obsinity.telemetry.processor.AttributeParamExtractor;
 import com.obsinity.telemetry.processor.TelemetryAttributeBinder;
 import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.springframework.context.support.GenericApplicationContext;
-
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TelemetryBlankWildcardValidationTest {
 
@@ -34,31 +35,24 @@ class TelemetryBlankWildcardValidationTest {
 		var ctx = new GenericApplicationContext();
 
 		// minimal supporting beans (disambiguate registerBean by providing Supplier)
-		ctx.registerBean("objectMapper",
-			com.fasterxml.jackson.databind.ObjectMapper.class);
-		ctx.registerBean("attributeParamExtractor",
-			AttributeParamExtractor.class,
-			AttributeParamExtractor::new);
-		ctx.registerBean("telemetryAttributeBinder",
-			TelemetryAttributeBinder.class,
-			() -> new TelemetryAttributeBinder(ctx.getBean(AttributeParamExtractor.class)));
-		ctx.registerBean("telemetryProcessorSupport",
-			TelemetryProcessorSupport.class,
-			TelemetryProcessorSupport::new);
-		ctx.registerBean("telemetryEventHandlerScanner",
-			TelemetryEventHandlerScanner.class,
-			TelemetryEventHandlerScanner::new);
+		ctx.registerBean("objectMapper", com.fasterxml.jackson.databind.ObjectMapper.class);
+		ctx.registerBean("attributeParamExtractor", AttributeParamExtractor.class, AttributeParamExtractor::new);
+		ctx.registerBean(
+				"telemetryAttributeBinder",
+				TelemetryAttributeBinder.class,
+				() -> new TelemetryAttributeBinder(ctx.getBean(AttributeParamExtractor.class)));
+		ctx.registerBean("telemetryProcessorSupport", TelemetryProcessorSupport.class, TelemetryProcessorSupport::new);
+		ctx.registerBean(
+				"telemetryEventHandlerScanner", TelemetryEventHandlerScanner.class, TelemetryEventHandlerScanner::new);
 
 		// register the bad handler bean
 		ctx.registerBean("badCatchAllDuplicate", BadCatchAllDuplicate.class);
 
 		ctx.refresh();
 
-		assertThatThrownBy(() ->
-			new TelemetryDispatchBus(ctx, ctx.getBean(TelemetryEventHandlerScanner.class))
-		)
-			.isInstanceOf(IllegalStateException.class)
-			.hasMessageContaining("Multiple blank wildcard ERROR handlers")
-			.hasMessageContaining(BadCatchAllDuplicate.class.getName());
+		assertThatThrownBy(() -> new TelemetryDispatchBus(ctx, ctx.getBean(TelemetryEventHandlerScanner.class)))
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessageContaining("Multiple blank wildcard ERROR handlers")
+				.hasMessageContaining(BadCatchAllDuplicate.class.getName());
 	}
 }

@@ -3,7 +3,14 @@ package com.obsinity.telemetry.receivers;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.aop.support.AopUtils;
@@ -11,8 +18,18 @@ import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.stereotype.Component;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.*;
-import com.obsinity.telemetry.dispatch.*;
+import com.obsinity.telemetry.annotations.PullAllAttributes;
+import com.obsinity.telemetry.annotations.PullAllContextValues;
+import com.obsinity.telemetry.annotations.PullAttribute;
+import com.obsinity.telemetry.annotations.PullContextValue;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import com.obsinity.telemetry.dispatch.AttrBindingException;
+import com.obsinity.telemetry.dispatch.BatchBinder;
+import com.obsinity.telemetry.dispatch.Handler;
+import com.obsinity.telemetry.dispatch.HandlerGroup;
+import com.obsinity.telemetry.dispatch.HolderBinder;
+import com.obsinity.telemetry.dispatch.ParamBinder;
+import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
@@ -24,7 +41,8 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 	private final List<HandlerGroup> groups;
 
 	public TelemetryDispatchBus(ListableBeanFactory beanFactory, TelemetryEventHandlerScanner scanner) {
-		Collection<Object> beans = beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
+		Collection<Object> beans =
+				beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class).values();
 
 		// De-dup by underlying user class to avoid double registration (proxy + target)
 		Map<Class<?>, HandlerGroup> uniq = new LinkedHashMap<>();
@@ -35,16 +53,19 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 			Class<?> userClass = resolveUserClass(bean);
 			HandlerGroup prev = uniq.putIfAbsent(userClass, g);
 			if (prev != null) {
-				log.warn("[Obsinity] Skipping duplicate @TelemetryEventHandler for userClass={} "
-						+ "(kept {}, dropped {})",
-					userClass.getName(),
-					describeBean(prev.bean()),
-					describeBean(bean));
+				log.warn(
+						"[Obsinity] Skipping duplicate @TelemetryEventHandler for userClass={} "
+								+ "(kept {}, dropped {})",
+						userClass.getName(),
+						describeBean(prev.bean()),
+						describeBean(bean));
 			}
 		}
 		this.groups = List.copyOf(uniq.values());
-		log.info("TelemetryDispatchBus registered {} handler beans (from {} discovered beans)",
-			groups.size(), beans.size());
+		log.info(
+				"TelemetryDispatchBus registered {} handler beans (from {} discovered beans)",
+				groups.size(),
+				beans.size());
 	}
 
 	@Override
@@ -62,8 +83,11 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				if (best != null) {
 					invokeHandler(best, holder, phase);
 				} else {
-					log.warn("Unhandled exception for event name={} phase={} ex={}",
-						holder.getName(), phase, String.valueOf(t));
+					log.warn(
+							"Unhandled exception for event name={} phase={} ex={}",
+							holder.getName(),
+							phase,
+							String.valueOf(t));
 				}
 				runAlways(bucket.always, holder, phase, t);
 			} else {
@@ -80,7 +104,7 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 
 		for (HandlerGroup g : groups) {
 			Map<String, HandlerGroup.ModeBuckets> byName =
-				g.index().getOrDefault(Lifecycle.ROOT_FLOW_FINISHED, new LinkedHashMap<>());
+					g.index().getOrDefault(Lifecycle.ROOT_FLOW_FINISHED, new LinkedHashMap<>());
 			for (HandlerGroup.ModeBuckets b : new LinkedHashSet<>(byName.values())) {
 				for (Handler h : concat(b.normal, b.always, b.error)) {
 					boolean batchCapable = h.binders().stream().anyMatch(bb -> bb instanceof BatchBinder);
@@ -91,11 +115,16 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 						if (!m.canAccess(h.bean())) m.setAccessible(true);
 						m.invoke(h.bean(), args);
 					} catch (AttrBindingException ex) {
-						log.debug("Batch binding error handler={} phase=ROOT_FLOW_FINISHED key={}: {}",
-							h.id(), ex.key(), ex.getMessage());
+						log.debug(
+								"Batch binding error handler={} phase=ROOT_FLOW_FINISHED key={}: {}",
+								h.id(),
+								ex.key(),
+								ex.getMessage());
 					} catch (Throwable t) {
-						log.warn("Batch handler invocation failed handler={} phase=ROOT_FLOW_FINISHED: {}",
-							h.id(), String.valueOf(t));
+						log.warn(
+								"Batch handler invocation failed handler={} phase=ROOT_FLOW_FINISHED: {}",
+								h.id(),
+								String.valueOf(t));
 					}
 				}
 			}
@@ -121,8 +150,9 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 	private Handler selectBestError(List<Handler> candidates, TelemetryHolder holder, Lifecycle phase, Throwable t) {
 		if (candidates == null || candidates.isEmpty()) return null;
 
-		Handler bestTyped = null; int bestDist = Integer.MAX_VALUE;
-		Handler catchAll  = null;
+		Handler bestTyped = null;
+		int bestDist = Integer.MAX_VALUE;
+		Handler catchAll = null;
 
 		for (Handler h : candidates) {
 			if (!h.kindAccepts(nullToInternal(holder.getSpanKind()))) continue;
@@ -135,7 +165,10 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 				continue;
 			}
 			int dist = distanceToTypes(t, types, h.includeSubclasses());
-			if (dist < bestDist) { bestDist = dist; bestTyped = h; }
+			if (dist < bestDist) {
+				bestDist = dist;
+				bestTyped = h;
+			}
 		}
 		return (bestTyped != null) ? bestTyped : catchAll;
 	}
@@ -171,7 +204,10 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		if (types != null && !types.isEmpty()) {
 			boolean match = false;
 			for (Class<? extends Throwable> cls : types) {
-				if (h.includeSubclasses() ? cls.isInstance(t) : t.getClass().equals(cls)) { match = true; break; }
+				if (h.includeSubclasses() ? cls.isInstance(t) : t.getClass().equals(cls)) {
+					match = true;
+					break;
+				}
 			}
 			if (!match) return false;
 		}
@@ -192,8 +228,12 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		int best = Integer.MAX_VALUE;
 		for (Class<? extends Throwable> cls : types) {
 			if (includeSubclasses ? cls.isInstance(t) : t.getClass().equals(cls)) {
-				int d = 0; Class<?> c = t.getClass();
-				while (c != null && !cls.equals(c)) { c = c.getSuperclass(); d++; }
+				int d = 0;
+				Class<?> c = t.getClass();
+				while (c != null && !cls.equals(c)) {
+					c = c.getSuperclass();
+					d++;
+				}
 				if (c != null && d < best) best = d;
 			}
 		}
@@ -211,8 +251,13 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		try {
 			args = bindParams(h, holder);
 		} catch (AttrBindingException ex) {
-			log.debug("Binding error for handler={} name={} phase={} key={}: {}",
-				h.id(), holder.getName(), phase, ex.key(), ex.getMessage());
+			log.debug(
+					"Binding error for handler={} name={} phase={} key={}: {}",
+					h.id(),
+					holder.getName(),
+					phase,
+					ex.key(),
+					ex.getMessage());
 			return false;
 		}
 		try {
@@ -221,8 +266,12 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 			m.invoke(h.bean(), args);
 			return true;
 		} catch (Throwable t) {
-			log.warn("Handler invocation failed handler={} name={} phase={}: {}",
-				h.id(), holder.getName(), phase, String.valueOf(t));
+			log.warn(
+					"Handler invocation failed handler={} name={} phase={}: {}",
+					h.id(),
+					holder.getName(),
+					phase,
+					String.valueOf(t));
 			return false;
 		}
 	}
@@ -270,7 +319,8 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 						val = Collections.unmodifiableMap(holder.getEventContext());
 					}
 					if (val == null && p.isAnnotationPresent(PullAllAttributes.class)) {
-						val = Collections.unmodifiableMap(new LinkedHashMap<>(holder.attributes().asMap()));
+						val = Collections.unmodifiableMap(
+								new LinkedHashMap<>(holder.attributes().asMap()));
 					}
 				}
 			}
@@ -326,7 +376,8 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 						val = Collections.unmodifiableMap(root.getEventContext());
 					}
 					if (val == null && p.isAnnotationPresent(PullAllAttributes.class)) {
-						val = Collections.unmodifiableMap(new LinkedHashMap<>(root.attributes().asMap()));
+						val = Collections.unmodifiableMap(
+								new LinkedHashMap<>(root.attributes().asMap()));
 					}
 				}
 			}
@@ -347,17 +398,21 @@ public class TelemetryDispatchBus implements TelemetryEventDispatcher {
 		if (key == null || key.isEmpty()) key = invokeIfPresent(ann, "value");
 		return key;
 	}
+
 	private static String readAlias(PullContextValue ann) {
 		String key = invokeIfPresent(ann, "name");
 		if (key == null || key.isEmpty()) key = invokeIfPresent(ann, "value");
 		return key;
 	}
+
 	private static String invokeIfPresent(Annotation ann, String method) {
 		try {
 			var m = ann.annotationType().getMethod(method);
 			Object v = m.invoke(ann);
 			return (v instanceof String s) ? s : null;
-		} catch (Exception e) { return null; }
+		} catch (Exception e) {
+			return null;
+		}
 	}
 
 	@SafeVarargs

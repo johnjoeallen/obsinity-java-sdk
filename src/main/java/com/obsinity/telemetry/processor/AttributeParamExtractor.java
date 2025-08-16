@@ -75,10 +75,8 @@ public final class AttributeParamExtractor {
 			Object value = args[i];
 
 			PushAttribute push = p.getAnnotation(PushAttribute.class);
-			if (push != null) {
-				if (!(push.omitIfNull() && value == null)) {
-					put(attrs, push.name(), value);
-				}
+			if (push != null && !(push.omitIfNull() && value == null)) {
+				put(attrs, push.name(), value);
 			}
 		}
 	}

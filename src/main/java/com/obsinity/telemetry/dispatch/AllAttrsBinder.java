@@ -1,7 +1,6 @@
 package com.obsinity.telemetry.dispatch;
 
 import java.util.LinkedHashMap;
-import java.util.Map;
 
 import com.obsinity.telemetry.model.TelemetryHolder;
 

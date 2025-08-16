@@ -325,7 +325,7 @@ class PaymentService {
 ## Lifecycle Diagram
 
 ```
-@Flow/@Step entry
+@Flow/@Step entry~~~~
   ↓
 Save values (push annotations or telemetry.put*)
   ↓
