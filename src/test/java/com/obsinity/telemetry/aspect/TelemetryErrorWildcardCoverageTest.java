@@ -13,7 +13,6 @@ import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.OAttributes;
 import com.obsinity.telemetry.model.TelemetryHolder;
 import com.obsinity.telemetry.processor.AttributeParamExtractor;
-import com.obsinity.telemetry.aspect.FlowOptions;
 import com.obsinity.telemetry.processor.TelemetryAttributeBinder;
 import com.obsinity.telemetry.processor.TelemetryContext;
 import com.obsinity.telemetry.processor.TelemetryProcessor;
@@ -137,12 +136,20 @@ class TelemetryErrorWildcardCoverageTest {
 	@TelemetryEventHandler
 	static class UnmatchedReceiver {
 		final List<TelemetryHolder> failureCalls = new CopyOnWriteArrayList<>();
+		final List<TelemetryHolder> failureCallsAllLifeCycles = new CopyOnWriteArrayList<>();
 		final List<Throwable>       failures     = new CopyOnWriteArrayList<>();
+		final List<Throwable>       failuresAllLifeCycles     = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> combinedFinishCalls = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> successFinishCalls  = new CopyOnWriteArrayList<>();
 
 		@OnUnMatchedEvent(scope = OnUnMatchedEvent.Scope.GLOBAL, mode = DispatchMode.FAILURE)
 		public void onAnyFailure(@BindEventThrowable Throwable ex, TelemetryHolder holder) {
+			failuresAllLifeCycles.add(ex);
+			failureCallsAllLifeCycles.add(holder);
+		}
+
+		@OnUnMatchedEvent(scope = OnUnMatchedEvent.Scope.GLOBAL, lifecycle = {Lifecycle.FLOW_FINISHED}, mode = DispatchMode.FAILURE)
+		public void onAnyFlowFinishedFailure(@BindEventThrowable Throwable ex, TelemetryHolder holder) {
 			failures.add(ex);
 			failureCalls.add(holder);
 		}
@@ -193,7 +200,9 @@ class TelemetryErrorWildcardCoverageTest {
 		flows.gamma();
 
 		// FAILURE global unmatched called exactly twice (alpha, beta)
+		assertThat(unmatched.failureCallsAllLifeCycles).hasSize(4);
 		assertThat(unmatched.failureCalls).hasSize(2);
+		assertThat(unmatched.failuresAllLifeCycles).hasSize(4);
 		assertThat(unmatched.failures).hasSize(2);
 
 		// COMBINED global unmatched at finish: fires for error flows (2), NOT for ok.gamma (named handler exists)

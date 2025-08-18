@@ -256,12 +256,20 @@ class TelemetryOnEventParamBindingTest {
 			lifecycle = {Lifecycle.FLOW_FINISHED},
 			name = "stepWithParams",
 			mode = DispatchMode.SUCCESS)
-		public void onStepFinished(
-			@PullAttribute(name = "step.answer") Integer ans,
+		public void stepWithParamsFinishedSuccessfully(
+				@PullAttribute(name = "step.answer") Integer ans,
 			@PullAttribute(name = "step.note") String note,
 			@PullContextValue(name = "step.ctx") String sctx,
 			TelemetryHolder holder) {
 			stepFinished.add(new StepCapture(ans, note, sctx, holder));
+		}
+
+		@OnEvent(
+			lifecycle = {Lifecycle.FLOW_FINISHED},
+			name = "lonelyStep",
+			mode = DispatchMode.SUCCESS)
+		public void lonelyStepFinishedSuccessfully(TelemetryHolder holder) {
+			finishes.add(holder);
 		}
 	}
 

@@ -182,7 +182,7 @@ class TelemetryIntegrationBootTest {
 		@OnUnMatchedEvent(
 			scope = OnUnMatchedEvent.Scope.GLOBAL,
 			lifecycle = {Lifecycle.ROOT_FLOW_FINISHED},
-			mode = DispatchMode.COMBINED)
+			mode = DispatchMode.SUCCESS)
 		public void onRoot(List<TelemetryHolder> batch) {
 			rootBatches.add(batch);
 		}

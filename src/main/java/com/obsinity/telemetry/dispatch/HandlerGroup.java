@@ -36,6 +36,11 @@ public final class HandlerGroup {
 		this.componentName = Objects.requireNonNull(componentName);
 	}
 
+	/** Accessor used by logging/diagnostics to identify the handler component. */
+	public String componentName() {
+		return this.componentName;
+	}
+
     /* =========================
        Registration (scanner)
        ========================= */

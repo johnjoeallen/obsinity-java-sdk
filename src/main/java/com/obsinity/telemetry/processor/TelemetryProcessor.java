@@ -65,7 +65,7 @@ public class TelemetryProcessor {
 			}
 		}
 
-		// --- Nested step handling (route as flowName.stepName for dispatch; fold later as stepName) ---
+// --- Nested step handling (dispatch as bare step name; fold later as same name) ---
 		if (nestedStep) {
 			final TelemetryHolder currParent = telemetryProcessorSupport.currentHolder();
 			if (currParent != null) {
@@ -79,12 +79,9 @@ public class TelemetryProcessor {
 				base.put("method", sig.getName());
 
 				final String stepBaseName = resolveStepName(joinPoint, options);
-				final String stepRoutedName = (currParent.name() != null && !currParent.name().isBlank())
-					? currParent.name() + "." + stepBaseName
-					: stepBaseName;
 
 				final TelemetryHolder stepHolder = TelemetryHolder.builder()
-					.name(stepRoutedName)          // <-- routed name used for dispatch matching
+					.name(stepBaseName)
 					.timestamp(now)
 					.timeUnixNano(epochStart)
 					.traceId(currParent.traceId())
@@ -103,15 +100,14 @@ public class TelemetryProcessor {
 					.startNanoTime(monoStart)
 					.build();
 
-				// Origins and a clean step base-name for folding
+				// Origins and the clean step base-name for folding
 				stepHolder.attributes().put("origin", "FLOW_STEP");
 				stepHolder.attributes().put("step.origin", "nested");
-				stepHolder.attributes().put("step.name", stepBaseName); // <-- used later for folded OEvent name
+				stepHolder.attributes().put("step.name", stepBaseName);
 
-				// Bind method params -> step attributes (producer-side)
+				// Bind method params -> step attributes/context
 				telemetryAttributeBinder.bind(stepHolder, joinPoint);
 
-				// Current + dispatch (as flow-like)
 				telemetryProcessorSupport.push(stepHolder);
 				onFlowStarted(stepHolder, currParent, options);
 			}
@@ -213,6 +209,8 @@ public class TelemetryProcessor {
 	/**
 	 * Finish a temporary step-holder: dispatch FLOW_FINISHED to handlers, fold into the parent as an OEvent, then
 	 * discard the step-holder (no batching).
+	 *
+	 * IMPORTANT: capture the parent BEFORE dispatch in case handlers mutate thread state.
 	 */
 	private void finalizeStepAsEvent(final Throwable errorOrNull) {
 		final TelemetryHolder stepHolder = telemetryProcessorSupport.currentHolder();
@@ -220,10 +218,14 @@ public class TelemetryProcessor {
 			return;
 		}
 
+		// --- Capture parent BEFORE dispatch to avoid losing it if handlers mutate state
+		final TelemetryHolder parent = telemetryProcessorSupport.currentHolderBelowTop();
+
 		final Instant now = Instant.now();
 		final long epochEnd = telemetryProcessorSupport.unixNanos(now);
 		final long monoEnd = System.nanoTime();
 
+		// decorate step attributes with result/error
 		if (errorOrNull == null) {
 			stepHolder.attributes().put("result", "success");
 		} else {
@@ -237,8 +239,7 @@ public class TelemetryProcessor {
 		// Dispatch as FLOW_FINISHED on the step-holder (handlers bind here)
 		dispatchBus.flowFinished(stepHolder);
 
-		// Fold into parent as an OEvent — use the clean step base name
-		final TelemetryHolder parent = telemetryProcessorSupport.currentHolderBelowTop();
+		// --- Fold into the captured parent
 		if (parent != null) {
 			final long duration = (stepHolder.getStartNanoTime() > 0L) ? (monoEnd - stepHolder.getStartNanoTime()) : 0L;
 			stepHolder.attributes().put("duration.nanos", duration);
@@ -248,7 +249,7 @@ public class TelemetryProcessor {
 				? stepHolder.timeUnixNano()
 				: telemetryProcessorSupport.unixNanos(stepHolder.timestamp());
 
-			// prefer attribute set earlier; fallback to the routed name's last segment
+			// Use clean step base name for the folded OEvent
 			String stepBaseName = String.valueOf(stepHolder.attributes().asMap().get("step.name"));
 			if (stepBaseName == null || stepBaseName.isBlank()) {
 				final String routed = stepHolder.name();
@@ -257,7 +258,7 @@ public class TelemetryProcessor {
 			}
 
 			final OEvent folded = new OEvent(
-				stepBaseName,                        // <-- clean folded event name
+				stepBaseName,
 				epochStart,
 				epochEnd,
 				stepHolder.attributes(),
@@ -266,9 +267,13 @@ public class TelemetryProcessor {
 				stepHolder.getEventContext()
 			);
 
-			parent.events().add(folded);
+			// ensure parent has an events list, then add
+			if (parent.events() != null) {
+				parent.events().add(folded);
+			}
 		}
 
+		// Discard: do not batch step holders
 		telemetryProcessorSupport.pop(stepHolder);
 	}
 
