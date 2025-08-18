@@ -1,12 +1,6 @@
 package com.obsinity.telemetry.annotations;
 
-import java.lang.annotation.Documented;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
-
-import org.springframework.core.annotation.AliasFor;
+import java.lang.annotation.*;
 
 import io.opentelemetry.api.trace.SpanKind;
 import com.obsinity.telemetry.model.Lifecycle;
@@ -14,59 +8,55 @@ import com.obsinity.telemetry.model.Lifecycle;
 /**
  * Declares a handler method for telemetry events discovered by the Obsinity dispatcher.
  *
- * <h2>Name matching</h2>
+ * <h2>Name matching (dot-chop)</h2>
+ * Use {@link #name()} for a dot-separated event name. Matching is:
+ * try the full event name; if not present, chop the last segment and try again.
+ * There are no wildcards and the empty string is never matched. If an exact tier
+ * has eligible handlers, broader ancestors are not considered.
  *
  * <ul>
- *   <li><b>Exact name:</b> set {@link #name()} (or {@link #value()}), e.g. {@code name="auth.login"}.
- *   <li><b>Prefix match:</b> set {@link #namePrefix()}, e.g. {@code namePrefix="db.query."} to match
- *       {@code db.query.select}, {@code db.query.insert}, etc.
- *   <li>If both are provided, <b>exact</b> takes precedence over <b>prefix</b>.
- *   <li>{@link #nameRegex()} is deprecated and ignored by new scanners.
+ *   <li><b>Exact:</b> {@code name="orders.checkout"}</li>
+ *   <li><b>Descendants:</b> the same handler also matches {@code orders.checkout.*}
+ *       (e.g., {@code orders.checkout.details}) via dot-chop.</li>
  * </ul>
  *
  * <h2>Other filters</h2>
- *
  * <ul>
- *   <li>{@link #lifecycle()} – restricts which {@link Lifecycle} phases the handler accepts (empty = any).
- *   <li>{@link #kinds()} – restricts accepted {@link SpanKind}s (empty = any). Null span kinds are treated as INTERNAL.
- *   <li>{@link #throwableTypes()} / {@link #includeSubclasses()} – narrow which exception types (if any) this handler
- *       matches.
- *   <li>{@link #messageRegex()} – optional regex matched against {@code Throwable.getMessage()} (if present).
- *   <li>{@link #causeType()} – optional fully-qualified class name; the throwable's {@code getCause()} must be an
- *       instance of this type for the handler to run.
+ *   <li>{@link #lifecycle()} – restricts accepted {@link Lifecycle} phases (empty = any).</li>
+ *   <li>{@link #kinds()} – restricts accepted {@link SpanKind}s (empty = any). Null kinds are treated as INTERNAL.</li>
+ *   <li>{@link #throwableTypes()} / {@link #includeSubclasses()} – optional exception-type filters for failure paths.</li>
+ *   <li>{@link #messageRegex()} – optional regex evaluated against {@code Throwable.getMessage()}.</li>
+ *   <li>{@link #causeType()} – optional fully-qualified class for {@code throwable.getCause()}.</li>
  * </ul>
  *
  * <h2>Dispatch mode</h2>
- *
- * <p>{@link #mode()} controls when the handler runs relative to exception presence:
- *
+ * {@link #mode()} controls when the handler runs:
  * <ul>
- *   <li>{@code NORMAL}: runs only when no exception is present (no {@code @BindEventException} param allowed).
- *   <li>{@code ERROR}: runs only when an exception is present (exactly one {@code @BindEventException} param required).
- *   <li>{@code ALWAYS}: runs regardless (exception param optional; at most one if present).
+ *   <li>{@link DispatchMode#COMBINED}: runs on both success and failure; may declare exactly one
+ *       {@code Throwable}-typed parameter (it will be {@code null} on success).</li>
+ *   <li>{@link DispatchMode#SUCCESS}: runs only when no exception is present; must not declare a
+ *       {@code Throwable} parameter.</li>
+ *   <li>{@link DispatchMode#FAILURE}: runs only when an exception is present; may declare exactly one
+ *       {@code Throwable}-typed parameter whose type must be assignable from the thrown exception.</li>
+ * </ul>
+ *
+ * <h2>Authoring rules (validated at startup)</h2>
+ * <ul>
+ *   <li>For a given name, {@code COMBINED} cannot coexist with {@code SUCCESS} or {@code FAILURE}.</li>
+ *   <li>If a name has {@code SUCCESS}, it must also have {@code FAILURE} (and vice-versa).</li>
  * </ul>
  *
  * <h2>Examples</h2>
- *
  * <pre>{@code
- * @OnEvent("orders.create") // exact name (via value() alias)
- * public void onCreate(TelemetryHolder h) { ... }
+ * @OnEvent(name = "orders.checkout") // exact; also matches orders.checkout.*
+ * void onEither(TelemetryHolder h) { ... }
  *
- * @OnEvent(namePrefix = "http.server.")
- * public void onHttp(TelemetryHolder h) { ... }
+ * @OnEvent(name = "orders.checkout", mode = DispatchMode.SUCCESS)
+ * void onOk(@PullAttribute("order.id") String id) { ... }
  *
- * @OnEvent(
- *   name = "db.error",
- *   lifecycle = {Lifecycle.FLOW_FINISHED},
- *   kinds = {SpanKind.CLIENT},
- *   mode = DispatchMode.ERROR,
- *   throwableTypes = {java.sql.SQLException.class},
- *   includeSubclasses = true,
- *   messageRegex = "timeout|deadlock",
- *   causeType = "java.net.SocketTimeoutException"
- * )
- * public void onDbError(@PullAttribute("db.instance") String db,
- *                       @BindEventException java.sql.SQLException ex) { ... }
+ * @OnEvent(name = "orders.checkout", mode = DispatchMode.FAILURE)
+ * void onFail(@BindEventException Throwable ex,
+ *             @PullAttribute("order.id") String id) { ... }
  * }</pre>
  */
 @Target(ElementType.METHOD)
@@ -75,65 +65,29 @@ import com.obsinity.telemetry.model.Lifecycle;
 public @interface OnEvent {
 
 	/**
-	 * Exact event name (alias of {@link #name()}).
-	 *
-	 * <p>Use this for concise declarations: {@code @OnEvent("orders.create")}
+	 * Exact event name used for dot-chop matching.
+	 * Must match {@code ^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)*$}.
 	 */
-	@AliasFor("name")
-	String value() default "";
-
-	/**
-	 * Exact event name.
-	 *
-	 * <p>If both {@code name} and {@link #namePrefix()} are provided, {@code name} wins.
-	 */
-	@AliasFor("value")
-	String name() default "";
-
-	/**
-	 * Event name <b>prefix</b>.
-	 *
-	 * <p>Matches any event whose name starts with this prefix. Ignored if {@link #name()} is non-empty.
-	 */
-	String namePrefix() default "";
+	String name();
 
 	/** Lifecycle phases this handler accepts. Empty means "any". */
 	Lifecycle[] lifecycle() default {};
 
-	/**
-	 * Controls when the handler runs relative to exception presence and whether an exception parameter is
-	 * allowed/required.
-	 */
-	DispatchMode mode() default DispatchMode.NORMAL;
+	/** Dispatch mode; default is {@link DispatchMode#COMBINED}. */
+	DispatchMode mode() default DispatchMode.COMBINED;
 
-	/**
-	 * Span kinds this handler accepts. Empty means "any".
-	 *
-	 * <p>Null kinds are treated as {@link SpanKind#INTERNAL} by the dispatcher.
-	 */
+	/** Span kinds this handler accepts. Empty means "any". Null kinds treated as {@link SpanKind#INTERNAL}. */
 	SpanKind[] kinds() default {};
 
-	/**
-	 * Throwable types to match. Empty means "any type".
-	 *
-	 * <p>Combined with {@link #includeSubclasses()} to control exact vs. instanceof matching.
-	 */
+	/** Throwable types to match (optional). Empty means "any type". */
 	Class<? extends Throwable>[] throwableTypes() default {};
 
-	/** If true (default), subclasses of {@link #throwableTypes()} also match; if false, requires exact class match. */
+	/** If true (default), subclasses of {@link #throwableTypes()} also match. */
 	boolean includeSubclasses() default true;
 
-	/**
-	 * Optional <b>regex</b> applied to {@link Throwable#getMessage()} (when a throwable is present).
-	 *
-	 * <p>If provided, the message must contain a match for the handler to run.
-	 */
+	/** Optional regex matched against {@link Throwable#getMessage()} when present. */
 	String messageRegex() default "";
 
-	/**
-	 * Fully-qualified class name for the expected {@code getCause()} type.
-	 *
-	 * <p>Leave empty to ignore cause-type matching.
-	 */
+	/** Fully-qualified class name that {@code throwable.getCause()} must be an instance of (optional). */
 	String causeType() default "";
 }

@@ -1,16 +1,36 @@
 package com.obsinity.telemetry.annotations;
 
-import java.lang.annotation.Documented;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+import java.lang.annotation.*;
 
 /**
- * Marker for beans that contain @OnEvent handler methods. Only classes annotated with this will be scanned and
- * registered.
+ * Marks a class as a telemetry event handler component.
+ *
+ * <h2>Semantics</h2>
+ * <ul>
+ *   <li>Only beans annotated with {@code @TelemetryEventHandler} are scanned for
+ *       {@link OnEvent}, {@link OnEveryEvent}, and {@link OnUnMatchedEvent} methods.</li>
+ *   <li>May optionally be combined with {@link EventScope} to restrict the
+ *       domain of events considered for this component.</li>
+ * </ul>
+ *
+ * <h2>Usage</h2>
+ * <pre>{@code
+ * @TelemetryEventHandler
+ * public class OrderHandlers {
+ *   @OnEvent(name = "orders.checkout")
+ *   void handleCheckout(...) { ... }
+ * }
+ *
+ * @TelemetryEventHandler
+ * @EventScope("order.")
+ * public class OrderScopedFallback {
+ *   @OnUnMatchedEvent(scope = OnUnMatchedEvent.Scope.COMPONENT)
+ *   void onUnmatched(OEvent e) { ... }
+ * }
+ * }</pre>
  */
-@Target(value = ElementType.TYPE)
+@Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
-public @interface TelemetryEventHandler {}
+public @interface TelemetryEventHandler {
+}

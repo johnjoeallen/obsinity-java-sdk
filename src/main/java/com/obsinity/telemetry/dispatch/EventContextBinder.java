@@ -3,6 +3,7 @@ package com.obsinity.telemetry.dispatch;
 import java.util.Map;
 import java.util.UUID;
 
+import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /** Binds a single value from TelemetryHolder.eventContext() into a handler parameter. */
@@ -16,7 +17,7 @@ public final class EventContextBinder implements ParamBinder {
 	}
 
 	@Override
-	public Object bind(TelemetryHolder holder) {
+	public Object bind(TelemetryHolder holder, Lifecycle phase, Throwable error) {
 		if (holder == null) return null;
 		Map<String, Object> ctx = holder.eventContext();
 		Object raw = (ctx != null ? ctx.get(name) : null);

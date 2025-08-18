@@ -2,13 +2,15 @@ package com.obsinity.telemetry.dispatch;
 
 import java.util.function.Function;
 
+import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /**
  * Binds an attribute key to a handler parameter, with optional presence + conversion.
  *
- * <p>- Uses TelemetryHolder.attrRaw(String) to preserve object values. - Passes through when the value already matches
- * the target type. - Falls back to a converter (object-aware or String-based).
+ * <p>- Uses TelemetryHolder.attrRaw(String) to preserve object values.
+ * <br>- Passes through when the value already matches the target type.
+ * <br>- Falls back to a converter (object-aware or String-based).
  */
 final class AttrBinder implements ParamBinder {
 	private final String key;
@@ -21,8 +23,8 @@ final class AttrBinder implements ParamBinder {
 	private final Class<?> targetType;
 
 	/**
-	 * Preferred ctor: accepts an Object-based converter and the explicit target type. If the raw value already
-	 * {@code instanceof targetType}, it is returned as-is.
+	 * Preferred ctor: accepts an Object-based converter and the explicit target type.
+	 * If the raw value already {@code instanceof targetType}, it is returned as-is.
 	 */
 	AttrBinder(String key, boolean required, Function<Object, Object> objectConverter, Class<?> targetType) {
 		this.key = key;
@@ -32,7 +34,7 @@ final class AttrBinder implements ParamBinder {
 	}
 
 	@Override
-	public Object bind(TelemetryHolder holder) {
+	public Object bind(TelemetryHolder holder, Lifecycle phase, Throwable error) {
 		Object raw = (holder == null) ? null : holder.attrRaw(key);
 
 		if (raw == null) {
@@ -54,9 +56,9 @@ final class AttrBinder implements ParamBinder {
 					return String.valueOf(converted);
 				}
 				throw new AttrBindingException(
-						key,
-						"converted value type " + converted.getClass().getName() + " not assignable to "
-								+ targetType.getName());
+					key,
+					"converted value type " + converted.getClass().getName() + " not assignable to "
+						+ targetType.getName());
 			}
 			return converted;
 		} catch (RuntimeException ex) {

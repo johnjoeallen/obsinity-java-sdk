@@ -1,6 +1,7 @@
 package com.obsinity.telemetry.dispatch;
 
 import com.obsinity.telemetry.annotations.BindEventThrowable;
+import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /** Binds the event Throwable per @BindEventThrowable (SELF, CAUSE, ROOT_CAUSE), with optional required flag. */
@@ -14,12 +15,12 @@ final class ThrowableBinder implements ParamBinder {
 	}
 
 	@Override
-	public Object bind(TelemetryHolder holder) {
-		Throwable t = (holder != null ? holder.getThrowable() : null);
+	public Object bind(TelemetryHolder holder, Lifecycle phase, Throwable error) {
+		Throwable t = error; // dispatcher passes the current throwable; prefer this
 
 		switch (source) {
 			case SELF -> {
-				// use t as-is
+				// t as-is
 			}
 			case CAUSE -> {
 				if (t != null) t = t.getCause();

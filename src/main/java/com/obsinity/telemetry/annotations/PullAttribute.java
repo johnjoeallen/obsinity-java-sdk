@@ -1,21 +1,43 @@
 package com.obsinity.telemetry.annotations;
 
-import java.lang.annotation.Documented;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+import org.springframework.core.annotation.AliasFor;
+
+import java.lang.annotation.*;
 
 /**
- * Consumer-side: bind a persisted attribute from the current event into a handler parameter.
+ * Consumer-side: bind a saved (persisted) attribute from the current event into a handler parameter.
  *
- * <p>Usage: @OnEvent(...) public void handle(@PullAttribute("order.id") String orderId) { ... } // or public void
- * handle(@PullAttribute(name = "order.id") String orderId) { ... }
+ * <p>Usage:</p>
+ * <pre>
+ *   @OnEvent(name = "order.created")
+ *   public void handle(@PullAttribute("order.id") String orderId) {
+ *       // ...
+ *   }
+ *
+ *   // or explicit:
+ *   public void handle(@PullAttribute(name = "order.id") String orderId) { ... }
+ * </pre>
+ *
+ * <p>Notes:</p>
+ * <ul>
+ *   <li>Supports {@link AliasFor} so {@code value()} and {@code name()} are interchangeable.</li>
+ *   <li>Extraction is performed by the parameter binder.</li>
+ * </ul>
  */
 @Target(ElementType.PARAMETER)
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
 public @interface PullAttribute {
-	/** Attribute key to read from the event's persisted attributes. */
+
+	/**
+	 * Attribute key to read from the event's saved attributes (shorthand).
+	 */
+	@AliasFor("name")
+	String value() default "";
+
+	/**
+	 * Same as {@link #value()} — provided for explicitness.
+	 */
+	@AliasFor("value")
 	String name() default "";
 }

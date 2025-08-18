@@ -1,21 +1,37 @@
 package com.obsinity.telemetry.annotations;
 
-import java.lang.annotation.Documented;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+import org.springframework.core.annotation.AliasFor;
+
+import java.lang.annotation.*;
 
 /**
- * Consumer-side: bind a context value from the current event into a handler parameter.
+ * Consumer-side: bind a value from the current event's ephemeral context into a handler parameter.
  *
- * <p>Usage: public void handle(@PullContextValue("retry") boolean retry) { ... } // or public void
- * handle(@PullContextValue(name = "retry") boolean retry) { ... }
+ * <p>Usage:</p>
+ * <pre>
+ *   @OnEvent(name = "step.finished")
+ *   public void onStep(@PullContextValue("request.id") String requestId) {
+ *       // ...
+ *   }
+ *
+ *   // or explicit:
+ *   public void onStep(@PullContextValue(name = "request.id") String requestId) { ... }
+ * </pre>
  */
 @Target(ElementType.PARAMETER)
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
 public @interface PullContextValue {
-	/** Context key to read. */
+
+	/**
+	 * Context key to read (shorthand).
+	 */
+	@AliasFor("name")
+	String value() default "";
+
+	/**
+	 * Same as {@link #value()} — provided for explicitness.
+	 */
+	@AliasFor("value")
 	String name() default "";
 }

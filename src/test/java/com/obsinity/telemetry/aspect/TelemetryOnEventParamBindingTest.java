@@ -9,6 +9,7 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 
+import com.obsinity.telemetry.annotations.OnUnMatchedEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,7 +24,6 @@ import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.test.annotation.DirtiesContext;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.BindEventThrowable;
 import com.obsinity.telemetry.annotations.DispatchMode;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
@@ -33,6 +33,7 @@ import com.obsinity.telemetry.annotations.PullAttribute;
 import com.obsinity.telemetry.annotations.PullContextValue;
 import com.obsinity.telemetry.annotations.Step;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import com.obsinity.telemetry.dispatch.HandlerGroup;
 import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.OAttributes;
@@ -46,9 +47,9 @@ import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 
 @SpringBootTest(
-		classes = TelemetryOnEventParamBindingTest.TestConfig.class,
-		webEnvironment = SpringBootTest.WebEnvironment.NONE,
-		properties = {"spring.main.web-application-type=none", "spring.main.allow-bean-definition-overriding=true"})
+	classes = TelemetryOnEventParamBindingTest.TestConfig.class,
+	webEnvironment = SpringBootTest.WebEnvironment.NONE,
+	properties = {"spring.main.web-application-type=none", "spring.main.allow-bean-definition-overriding=true"})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class TelemetryOnEventParamBindingTest {
 
@@ -74,22 +75,25 @@ class TelemetryOnEventParamBindingTest {
 			return new TelemetryProcessorSupport();
 		}
 
+		// NEW: build handler groups using the updated scanner API (needs the bean factory)
 		@Bean
-		TelemetryEventHandlerScanner telemetryEventHandlerScanner() {
-			return new TelemetryEventHandlerScanner();
+		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory) {
+			return new TelemetryEventHandlerScanner(beanFactory).handlerGroups();
 		}
 
+		// NEW: bus now takes just the groups
 		@Bean
-		TelemetryDispatchBus telemetryDispatchBus(ListableBeanFactory bf, TelemetryEventHandlerScanner scanner) {
-			return new TelemetryDispatchBus(bf, scanner);
+		TelemetryDispatchBus telemetryDispatchBus(List<HandlerGroup> groups) {
+			return new TelemetryDispatchBus(groups);
 		}
 
 		@Bean
 		TelemetryProcessor telemetryProcessor(
-				TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
+			TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
 			return new TelemetryProcessor(binder, support, bus) {
 				@Override
-				protected OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
+				protected OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp,
+													  com.obsinity.telemetry.aspect.FlowOptions opts) {
 					Map<String, Object> m = new LinkedHashMap<>();
 					m.put("test.flow", opts.name());
 					m.put("declaring.class", pjp.getSignature().getDeclaringTypeName());
@@ -175,13 +179,13 @@ class TelemetryOnEventParamBindingTest {
 			final Map<String, Object> ctxAll;
 
 			FlowCapture(
-					String userId,
-					Integer attempt,
-					UUID orderUuid,
-					ComplexMeta meta,
-					String tenantCtx,
-					Integer retriesCtx,
-					Map<String, Object> ctxAll) {
+				String userId,
+				Integer attempt,
+				UUID orderUuid,
+				ComplexMeta meta,
+				String tenantCtx,
+				Integer retriesCtx,
+				Map<String, Object> ctxAll) {
 				this.userId = userId;
 				this.attempt = attempt;
 				this.orderUuid = orderUuid;
@@ -197,33 +201,37 @@ class TelemetryOnEventParamBindingTest {
 		final List<TelemetryHolder> starts = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> finishes = new CopyOnWriteArrayList<>();
 
-		@OnEvent(
-				lifecycle = {Lifecycle.FLOW_STARTED},
-				mode = DispatchMode.ALWAYS)
+		/* ---- Unmatched fallbacks → COMBINED ---- */
+
+		@OnUnMatchedEvent(
+			lifecycle = {Lifecycle.FLOW_STARTED},
+			mode = DispatchMode.COMBINED)
 		public void onStart(TelemetryHolder holder) {
 			starts.add(holder);
 		}
 
-		@OnEvent(
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				mode = DispatchMode.ALWAYS)
+		@OnUnMatchedEvent(
+			lifecycle = {Lifecycle.FLOW_FINISHED},
+			mode = DispatchMode.COMBINED)
 		public void onFinish(TelemetryHolder holder) {
 			finishes.add(holder);
 		}
 
+		/* ---- Named explicit handlers → SUCCESS ---- */
+
 		@OnEvent(
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				name = "bindingFlow",
-				mode = DispatchMode.ALWAYS)
+			lifecycle = {Lifecycle.FLOW_FINISHED},
+			name = "bindingFlow",
+			mode = DispatchMode.SUCCESS)
 		public void onBindingFlowFinished(
-				TelemetryHolder holder,
-				@PullAttribute(name = "user.id") String userId,
-				@PullAttribute(name = "attempt") Integer attempt,
-				@PullAttribute(name = "order.uuid") UUID orderUuid,
-				@PullAttribute(name = "meta") ComplexMeta meta,
-				@PullContextValue(name = "tenant") String tenant,
-				@PullContextValue(name = "retries") Integer retries,
-				@PullAllContextValues Map<String, Object> allCtx) {
+			TelemetryHolder holder,
+			@PullAttribute(name = "user.id") String userId,
+			@PullAttribute(name = "attempt") Integer attempt,
+			@PullAttribute(name = "order.uuid") UUID orderUuid,
+			@PullAttribute(name = "meta") ComplexMeta meta,
+			@PullContextValue(name = "tenant") String tenant,
+			@PullContextValue(name = "retries") Integer retries,
+			@PullAllContextValues Map<String, Object> allCtx) {
 			flowFinished.add(new FlowCapture(userId, attempt, orderUuid, meta, tenant, retries, allCtx));
 			allFinishes.add(holder);
 		}
@@ -245,40 +253,15 @@ class TelemetryOnEventParamBindingTest {
 		final List<StepCapture> stepFinished = new CopyOnWriteArrayList<>();
 
 		@OnEvent(
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				name = "stepWithParams",
-				mode = DispatchMode.ALWAYS)
+			lifecycle = {Lifecycle.FLOW_FINISHED},
+			name = "stepWithParams",
+			mode = DispatchMode.SUCCESS)
 		public void onStepFinished(
-				@PullAttribute(name = "step.answer") Integer ans,
-				@PullAttribute(name = "step.note") String note,
-				@PullContextValue(name = "step.ctx") String sctx,
-				TelemetryHolder holder) {
+			@PullAttribute(name = "step.answer") Integer ans,
+			@PullAttribute(name = "step.note") String note,
+			@PullContextValue(name = "step.ctx") String sctx,
+			TelemetryHolder holder) {
 			stepFinished.add(new StepCapture(ans, note, sctx, holder));
-		}
-
-		/* ===== Catch‑all ERROR handlers to satisfy strict validation ===== */
-
-		// Wildcard selector (covers handlers with no name/prefix)
-		@OnEvent(mode = DispatchMode.ERROR)
-		public void onAnyError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
-			// no-op; present to satisfy strict error coverage for name:*
-		}
-
-		// Named selectors used in this test
-		@OnEvent(
-				name = "bindingFlow",
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				mode = DispatchMode.ERROR)
-		public void onBindingFlowError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
-			// no-op; present to satisfy strict error coverage for name:bindingFlow
-		}
-
-		@OnEvent(
-				name = "stepWithParams",
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				mode = DispatchMode.ERROR)
-		public void onStepWithParamsError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
-			// no-op; present to satisfy strict error coverage for name:stepWithParams
 		}
 	}
 
@@ -332,14 +315,14 @@ class TelemetryOnEventParamBindingTest {
 		assertThat(sc.holder.isStep()).isTrue();
 
 		TelemetryHolder parent = handler.finishes.stream()
-				.filter(h -> !h.isStep() && "flowWithStep".equals(h.name()))
-				.findFirst()
-				.orElseThrow();
+			.filter(h -> !h.isStep() && "flowWithStep".equals(h.name()))
+			.findFirst()
+			.orElseThrow();
 
 		OEvent folded = parent.events().stream()
-				.filter(e -> "stepWithParams".equals(e.name()))
-				.findFirst()
-				.orElseThrow();
+			.filter(e -> "stepWithParams".equals(e.name()))
+			.findFirst()
+			.orElseThrow();
 
 		assertThat(folded.attributes().asMap()).containsEntry("step.answer", 7).containsEntry("step.note", "ok");
 		assertThat(folded.eventContext().get("step.ctx")).isEqualTo("ctx!");

@@ -1,64 +1,56 @@
 package com.obsinity.telemetry.annotations;
 
 /**
- * Declares the dispatch mode for an {@link OnEvent} handler.
+ * Dispatch mode for {@link OnEvent} handlers.
  *
- * <p>The dispatch mode controls <b>when</b> the handler is invoked in relation to the presence of an exception in the
- * {@code TelemetryHolder}, and whether it is allowed (or required) to bind that exception via
- * {@link BindEventException}.
- *
- * <h2>Modes</h2>
- *
- * <dl>
- *   <dt>{@link #NORMAL}
- *   <dd>Invoked only when there is <b>no</b> exception present for the event.
- *       <ul>
- *         <li>{@link BindEventException} parameters are <b>not allowed</b>.
- *         <li>Use for standard "happy-path" processing.
- *       </ul>
- *   <dt>{@link #ERROR}
- *   <dd>Invoked only when there <b>is</b> an exception present for the event.
- *       <ul>
- *         <li>Exactly <b>one</b> {@link BindEventException} parameter is <b>required</b>.
- *         <li>The bound parameter type must be {@link Throwable} or a subclass.
- *         <li>Use for exception-specific handling and recovery logic.
- *       </ul>
- *   <dt>{@link #ALWAYS}
- *   <dd>Invoked regardless of whether an exception is present.
- *       <ul>
- *         <li>{@link BindEventException} is <b>optional</b>.
- *         <li>If present, at most one {@link BindEventException} parameter is allowed, and it must be a
- *             {@link Throwable} type.
- *         <li>Use for cleanup, auditing, or metrics logic that must always run.
- *       </ul>
- * </dl>
- *
- * <h2>Validation Rules</h2>
- *
- * The scanner will enforce the following at startup:
+ * <p>Controls when a handler is invoked relative to the outcome of the event:
  *
  * <ul>
- *   <li><b>NORMAL</b>: no {@link BindEventException} parameters permitted.
- *   <li><b>ERROR</b>: exactly one {@link BindEventException} parameter required.
- *   <li><b>ALWAYS</b>: at most one {@link BindEventException} parameter allowed.
+ *   <li>{@link #COMBINED} — invoked for both <strong>success</strong> and <strong>failure</strong>
+ *       outcomes. A handler in this mode may declare exactly one parameter of type
+ *       {@link Throwable} (or a subtype) to receive the error when present. On success,
+ *       the parameter is passed as {@code null}.</li>
+ *
+ *   <li>{@link #SUCCESS} — invoked only when the event completes <strong>without</strong>
+ *       an exception. Handlers in this mode <em>must not</em> declare a {@code Throwable}
+ *       parameter; startup validation will fail otherwise.</li>
+ *
+ *   <li>{@link #FAILURE} — invoked only when the event completes <strong>with</strong>
+ *       an exception. A handler in this mode may declare exactly one parameter of type
+ *       {@link Throwable} (or a subtype) to receive the thrown exception. If declared,
+ *       the exception type must be assignable from the actual error, otherwise the
+ *       handler is skipped.</li>
  * </ul>
  *
- * @see OnEvent
- * @see BindEventException
+ * <h3>Authoring rules (enforced at startup)</h3>
+ * <ul>
+ *   <li>If a name has a {@code COMBINED} handler, it must not also have {@code SUCCESS}
+ *       or {@code FAILURE} handlers.</li>
+ *   <li>If a name has a {@code SUCCESS} handler, it must also have a {@code FAILURE}
+ *       handler for the same name (and vice versa).</li>
+ * </ul>
+ *
+ * <h3>Name matching</h3>
+ * <p>Handlers are registered under dot-separated names. Matching is done with a simple
+ * "dot-chop" algorithm: try the full event name, then iteratively remove the last
+ * segment until a match is found. There are no wildcards or empty-string catch-alls.</p>
  */
 public enum DispatchMode {
-
-	/** Runs only when there is <b>no</b> exception present. No {@link BindEventException} parameter allowed. */
-	NORMAL,
+	/**
+	 * Runs on both success and failure.
+	 * May bind exactly one {@link Throwable} parameter.
+	 */
+	COMBINED,
 
 	/**
-	 * Runs only when there <b>is</b> an exception present. Exactly one {@link BindEventException} parameter is
-	 * required.
+	 * Runs only when the event completes successfully.
+	 * Must not bind a {@link Throwable}.
 	 */
-	ERROR,
+	SUCCESS,
 
 	/**
-	 * Runs regardless of exception presence. {@link BindEventException} parameter is optional; if present, at most one.
+	 * Runs only when the event fails with an exception.
+	 * May bind exactly one {@link Throwable} parameter.
 	 */
-	ALWAYS
+	FAILURE
 }
