@@ -14,20 +14,20 @@ import com.obsinity.telemetry.model.TelemetryHolder;
 
 /** Immutable, precompiled handler descriptor discovered at bootstrap. */
 public record Handler(
-	Object bean,
-	Method method,
-	String exactName,                 // dot-chop key (validated by scanner; no wildcards)
-	BitSet lifecycleMask,
-	BitSet kindMask,
-	DispatchMode mode,                // COMBINED / SUCCESS / FAILURE
-	List<Class<? extends Throwable>> throwableTypes,
-	boolean includeSubclasses,
-	Pattern messagePattern,           // optional regex on Throwable.getMessage()
-	Class<?> causeTypeOrNull,         // optional Throwable.getCause() type
-	List<ParamBinder> binders,
-	Set<String> requiredAttrs,
-	String id                         // e.g. beanClass#method
-) {
+		Object bean,
+		Method method,
+		String exactName, // dot-chop key (validated by scanner; no wildcards)
+		BitSet lifecycleMask,
+		BitSet kindMask,
+		DispatchMode mode, // COMBINED / SUCCESS / FAILURE
+		List<Class<? extends Throwable>> throwableTypes,
+		boolean includeSubclasses,
+		Pattern messagePattern, // optional regex on Throwable.getMessage()
+		Class<?> causeTypeOrNull, // optional Throwable.getCause() type
+		List<ParamBinder> binders,
+		Set<String> requiredAttrs,
+		String id // e.g. beanClass#method
+		) {
 
 	/** Lifecycle acceptance (null mask = any). */
 	public boolean lifecycleAccepts(Lifecycle lc) {
@@ -41,15 +41,27 @@ public record Handler(
 		return (kindMask == null) || kindMask.get(kind.ordinal());
 	}
 
-	public boolean isCombinedMode() { return mode == DispatchMode.COMBINED; }
-	public boolean isSuccessMode()  { return mode == DispatchMode.SUCCESS; }
-	public boolean isFailureMode()  { return mode == DispatchMode.FAILURE; }
+	public boolean isCombinedMode() {
+		return mode == DispatchMode.COMBINED;
+	}
+
+	public boolean isSuccessMode() {
+		return mode == DispatchMode.SUCCESS;
+	}
+
+	public boolean isFailureMode() {
+		return mode == DispatchMode.FAILURE;
+	}
 
 	/** Convenience accessor for the dispatcher’s dot-chop map key. */
-	public String nameKey() { return exactName; }
+	public String nameKey() {
+		return exactName;
+	}
 
 	/** Back-compat shim so callers can use getMode() instead of record accessor mode(). */
-	public DispatchMode getMode() { return mode; }
+	public DispatchMode getMode() {
+		return mode;
+	}
 
 	/** Human-friendly id for logs. */
 	public String debugName() {
@@ -60,9 +72,7 @@ public record Handler(
 		}
 	}
 
-	/**
-	 * Fast acceptance test combining mode, lifecycle/kind masks, required attrs, and failure filters.
-	 */
+	/** Fast acceptance test combining mode, lifecycle/kind masks, required attrs, and failure filters. */
 	public boolean accepts(Lifecycle phase, TelemetryHolder h, boolean failed, Throwable error) {
 		// 0) Mode vs error presence
 		if (isSuccessMode() && failed) return false;
@@ -75,7 +85,9 @@ public record Handler(
 
 		// 2) Required attributes
 		if (requiredAttrs != null && !requiredAttrs.isEmpty()) {
-			Map<String, ?> attrs = (h == null || h.attributes() == null) ? null : h.attributes().asMap();
+			Map<String, ?> attrs = (h == null || h.attributes() == null)
+					? null
+					: h.attributes().asMap();
 			if (attrs == null || !attrs.keySet().containsAll(requiredAttrs)) return false;
 		}
 
@@ -87,8 +99,11 @@ public record Handler(
 			boolean ok = false;
 			for (Class<? extends Throwable> tt : throwableTypes) {
 				if (tt == null) continue;
-				if (includeSubclasses ? (tt.isInstance(error)) : (error != null && error.getClass().equals(tt))) {
-					ok = true; break;
+				if (includeSubclasses
+						? (tt.isInstance(error))
+						: (error != null && error.getClass().equals(tt))) {
+					ok = true;
+					break;
 				}
 			}
 			if (!ok) return false;
@@ -110,8 +125,8 @@ public record Handler(
 	}
 
 	/**
-	 * Invoke the handler method using precompiled {@link ParamBinder}s.
-	 * Ensures reflective access even for non-public declaring classes (e.g., test inner classes).
+	 * Invoke the handler method using precompiled {@link ParamBinder}s. Ensures reflective access even for non-public
+	 * declaring classes (e.g., test inner classes).
 	 */
 	public void invoke(TelemetryHolder h, Lifecycle phase) throws Exception {
 		final int paramCount = method.getParameterCount();

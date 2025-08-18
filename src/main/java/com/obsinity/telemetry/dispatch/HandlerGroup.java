@@ -1,10 +1,18 @@
 package com.obsinity.telemetry.dispatch;
 
 import com.obsinity.telemetry.annotations.DispatchMode;
+import com.obsinity.telemetry.annotations.EventScope;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
+import io.opentelemetry.api.trace.SpanKind;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * Per-component registry of handlers discovered by the scanner.
@@ -14,11 +22,16 @@ import java.util.*;
  * - unmatched: component-scoped @OnUnMatchedEvent(scope=COMPONENT).
  * - globalUnmatched: global @OnUnMatchedEvent(scope=GLOBAL).
  * - taps: @OnEveryEvent (additive; always run).
+ *
+ * Optional: component-level EventScope filter (prefix + lifecycle + kind + error mode).
  */
 public final class HandlerGroup {
 
 	/** Human-friendly component name (e.g., bean class simple name). */
 	public final String componentName;
+
+	/** Optional component-level scope filter; null/ALLOW_ALL means no filtering. */
+	private Scope scope = Scope.allowAll();
 
 	/** Dot-chop tiers: event name → mode buckets. Exact name first, then ancestors during dispatch. */
 	private final Map<String, ModeBucketsByPhase> tiers = new HashMap<>();
@@ -36,14 +49,29 @@ public final class HandlerGroup {
 		this.componentName = Objects.requireNonNull(componentName);
 	}
 
+	public HandlerGroup(String componentName, Scope scope) {
+		this.componentName = Objects.requireNonNull(componentName);
+		this.scope = (scope == null ? Scope.allowAll() : scope);
+	}
+
 	/** Accessor used by logging/diagnostics to identify the handler component. */
 	public String componentName() {
 		return this.componentName;
 	}
 
-    /* =========================
-       Registration (scanner)
-       ========================= */
+	/** Configure/override the component-level scope. Null means "allow all". */
+	public void setScope(Scope scope) {
+		this.scope = (scope == null ? Scope.allowAll() : scope);
+	}
+
+	/** True if this group should see the given event (component-level filter). */
+	public boolean isInScope(Lifecycle phase, String eventName, TelemetryHolder holder) {
+		return scope.test(phase, eventName, holder);
+	}
+
+	/* =========================
+	   Registration (scanner)
+	   ========================= */
 
 	public void registerOnEvent(String exactName, Lifecycle phase, DispatchMode mode, Handler h) {
 		tiers.computeIfAbsent(exactName, k -> new ModeBucketsByPhase())
@@ -70,9 +98,9 @@ public final class HandlerGroup {
 		}
 	}
 
-    /* =========================
-       Query (dispatcher)
-       ========================= */
+	/* =========================
+	   Query (dispatcher)
+	   ========================= */
 
 	/**
 	 * Dot-chop selection for this component:
@@ -101,9 +129,78 @@ public final class HandlerGroup {
 		return (i < 0) ? null : name.substring(0, i);
 	}
 
-    /* =========================
-       Types
-       ========================= */
+	/* =========================
+	   Types
+	   ========================= */
+
+	/**
+	 * Compiled component-level scope based on {@link EventScope}.
+	 * All configured predicates are ANDed (prefix AND lifecycle AND kind AND error mode).
+	 */
+	public static final class Scope {
+		private final String[] prefixes;           // null/empty = any
+		private final EnumSet<Lifecycle> phases;   // null = any
+		private final EnumSet<SpanKind> kinds;     // null = any
+		private final EventScope.ErrorMode errorMode; // never null
+
+		private Scope(String[] prefixes,
+					  EnumSet<Lifecycle> phases,
+					  EnumSet<SpanKind> kinds,
+					  EventScope.ErrorMode errorMode) {
+			this.prefixes = (prefixes == null || prefixes.length == 0) ? null : prefixes;
+			this.phases = (phases == null || phases.isEmpty()) ? null : phases;
+			this.kinds = (kinds == null || kinds.isEmpty()) ? null : kinds;
+			this.errorMode = (errorMode == null ? EventScope.ErrorMode.ANY : errorMode);
+		}
+
+		public static Scope allowAll() {
+			return new Scope(null, null, null, EventScope.ErrorMode.ANY);
+		}
+
+		public static Scope of(String[] prefixes,
+							   Lifecycle[] lifecycles,
+							   SpanKind[] kinds,
+							   EventScope.ErrorMode errorMode) {
+			EnumSet<Lifecycle> plc = null;
+			if (lifecycles != null && lifecycles.length > 0) {
+				plc = EnumSet.noneOf(Lifecycle.class);
+				for (Lifecycle lc : lifecycles) plc.add(lc);
+			}
+			EnumSet<SpanKind> pk = null;
+			if (kinds != null && kinds.length > 0) {
+				pk = EnumSet.noneOf(SpanKind.class);
+				for (SpanKind k : kinds) pk.add(k == null ? SpanKind.INTERNAL : k);
+			}
+			return new Scope(prefixes, plc, pk, errorMode);
+		}
+
+		boolean test(Lifecycle phase, String eventName, TelemetryHolder holder) {
+			// prefixes
+			if (prefixes != null && eventName != null) {
+				boolean hit = false;
+				for (String p : prefixes) {
+					if (p != null && !p.isEmpty() && eventName.startsWith(p)) { hit = true; break; }
+				}
+				if (!hit) return false;
+			}
+			// phase
+			if (phases != null && (phase == null || !phases.contains(phase))) return false;
+
+			// kind
+			if (kinds != null) {
+				SpanKind sk = (holder == null || holder.kind() == null) ? SpanKind.INTERNAL : holder.kind();
+				if (!kinds.contains(sk)) return false;
+			}
+
+			// error mode
+			boolean failed = holder != null && holder.throwable() != null;
+			return switch (errorMode) {
+				case ANY -> true;
+				case ONLY_ERROR -> failed;
+				case ONLY_NON_ERROR -> !failed;
+			};
+		}
+	}
 
 	/** Per-phase split of mode buckets. */
 	public static final class ModeBucketsByPhase {

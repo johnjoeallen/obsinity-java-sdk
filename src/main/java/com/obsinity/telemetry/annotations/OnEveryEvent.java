@@ -1,15 +1,19 @@
 package com.obsinity.telemetry.annotations;
 
-import com.obsinity.telemetry.model.Lifecycle;
 import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.model.Lifecycle;
 
-import java.lang.annotation.*;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 /**
- * Additive "tap" that sees every event (subject to filters) regardless of whether any @OnEvent matched.
- * Never affects unmatched logic.
+ * Additive "tap" that sees every event (subject to filters) regardless of whether any @OnEvent matched. Never affects
+ * unmatched logic.
  *
- * Honors @EventScope on the component if present.
+ * <p>Honors @EventScope on the component if present.
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)

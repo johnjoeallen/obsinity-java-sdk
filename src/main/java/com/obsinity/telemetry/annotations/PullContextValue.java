@@ -2,12 +2,17 @@ package com.obsinity.telemetry.annotations;
 
 import org.springframework.core.annotation.AliasFor;
 
-import java.lang.annotation.*;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 /**
  * Consumer-side: bind a value from the current event's ephemeral context into a handler parameter.
  *
- * <p>Usage:</p>
+ * <p>Usage:
+ *
  * <pre>
  *   @OnEvent(name = "step.finished")
  *   public void onStep(@PullContextValue("request.id") String requestId) {
@@ -23,15 +28,11 @@ import java.lang.annotation.*;
 @Documented
 public @interface PullContextValue {
 
-	/**
-	 * Context key to read (shorthand).
-	 */
+	/** Context key to read (shorthand). */
 	@AliasFor("name")
 	String value() default "";
 
-	/**
-	 * Same as {@link #value()} — provided for explicitness.
-	 */
+	/** Same as {@link #value()} — provided for explicitness. */
 	@AliasFor("value")
 	String name() default "";
 }

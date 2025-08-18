@@ -1,12 +1,5 @@
 package com.obsinity.telemetry.processor;
 
-import com.obsinity.telemetry.annotations.PushAttribute;
-import com.obsinity.telemetry.model.OAttributes;
-import com.obsinity.telemetry.model.TelemetryHolder;
-import org.aspectj.lang.ProceedingJoinPoint;
-import org.aspectj.lang.reflect.MethodSignature;
-import org.springframework.stereotype.Component;
-
 import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -15,16 +8,23 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.BiConsumer;
 
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.stereotype.Component;
+
+import com.obsinity.telemetry.annotations.PushAttribute;
+import com.obsinity.telemetry.model.OAttributes;
+import com.obsinity.telemetry.model.TelemetryHolder;
+
 /**
  * Producer-side parameter binder.
  *
- * Writes method parameters into:
- *  - a {@link TelemetryHolder}'s attributes/context (via {@link #bind(TelemetryHolder, ProceedingJoinPoint)})
- *  - a provided {@link OAttributes} instance (via {@link #bind(OAttributes, ProceedingJoinPoint)})
+ * <p>Writes method parameters into: - a {@link TelemetryHolder}'s attributes/context (via {@link #bind(TelemetryHolder,
+ * ProceedingJoinPoint)}) - a provided {@link OAttributes} instance (via {@link #bind(OAttributes,
+ * ProceedingJoinPoint)})
  *
- * Supported annotations:
- *  - {@link PushAttribute}: attributes[key] = arg  (skips null when omitIfNull=true)
- *  - "com.obsinity.telemetry.annotations.PushContextValue" (if present): eventContext[key] = arg
+ * <p>Supported annotations: - {@link PushAttribute}: attributes[key] = arg (skips null when omitIfNull=true) -
+ * "com.obsinity.telemetry.annotations.PushContextValue" (if present): eventContext[key] = arg
  */
 @Component
 public class TelemetryAttributeBinder {
@@ -58,7 +58,7 @@ public class TelemetryAttributeBinder {
 		if (paramAnns.length == 0) return;
 
 		BiConsumer<Object, Object> attrWriter = writerForAttributes(holder);
-		BiConsumer<Object, Object> ctxWriter  = writerForContext(holder, true); // lazily create if needed
+		BiConsumer<Object, Object> ctxWriter = writerForContext(holder, true); // lazily create if needed
 
 		for (int i = 0; i < paramAnns.length; i++) {
 			Object arg = (args != null && i < args.length) ? args[i] : null;
@@ -194,8 +194,8 @@ public class TelemetryAttributeBinder {
 	// ---------------- robust method resolution ----------------
 
 	/**
-	 * Resolve the concrete target method (handling proxies/bridge methods), preferring one
-	 * that actually has parameter annotations like {@link PushAttribute}.
+	 * Resolve the concrete target method (handling proxies/bridge methods), preferring one that actually has parameter
+	 * annotations like {@link PushAttribute}.
 	 */
 	private static Method resolveMethodWithAnnotations(ProceedingJoinPoint pjp) {
 		MethodSignature sig = (MethodSignature) pjp.getSignature();
@@ -212,7 +212,8 @@ public class TelemetryAttributeBinder {
 		try {
 			Method pub = targetClass.getMethod(m.getName(), paramTypes);
 			if (hasAnyParamPushAnnotation(pub)) return pub;
-		} catch (NoSuchMethodException ignored) { }
+		} catch (NoSuchMethodException ignored) {
+		}
 
 		// 3) Scan by name + arity; prefer methods that HAVE the annotations we're after
 		Method byName = findByNameAndArityPreferAnnotated(targetClass, m.getName(), paramTypes.length);
@@ -230,12 +231,13 @@ public class TelemetryAttributeBinder {
 				Method mm = c.getDeclaredMethod(name, params);
 				mm.setAccessible(true);
 				return mm;
-			} catch (NoSuchMethodException ignored) { }
+			} catch (NoSuchMethodException ignored) {
+			}
 			// also scan for bridge methods by name/arity
 			for (Method cand : c.getDeclaredMethods()) {
 				if (cand.getName().equals(name)
-					&& cand.getParameterCount() == params.length
-					&& (cand.isBridge() || cand.isSynthetic())) {
+						&& cand.getParameterCount() == params.length
+						&& (cand.isBridge() || cand.isSynthetic())) {
 					cand.setAccessible(true);
 					return cand;
 				}
@@ -314,7 +316,7 @@ public class TelemetryAttributeBinder {
 			return (Map<String, Object>) m;
 		}
 		// Try common accessors returning a Map
-		for (String method : new String[]{"asMap", "toMap", "map", "unwrap"}) {
+		for (String method : new String[] {"asMap", "toMap", "map", "unwrap"}) {
 			Method mm = findMethod(obj.getClass(), method);
 			if (mm != null) {
 				Object res = invokeQuiet(obj, mm);

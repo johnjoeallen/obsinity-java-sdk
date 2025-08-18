@@ -1,41 +1,48 @@
 package com.obsinity.telemetry.annotations;
 
-import com.obsinity.telemetry.model.Lifecycle;
-import io.opentelemetry.api.trace.SpanKind;
 import org.springframework.core.annotation.AliasFor;
 
-import java.lang.annotation.*;
+import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.model.Lifecycle;
+
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 /**
- * Declares a component-level filter (scope) for which events are even considered
- * by this handler component.
+ * Declares a component-level filter (scope) for which events are even considered by this handler component.
  *
  * <h2>Semantics</h2>
+ *
  * <ul>
- *   <li>A component annotated with {@code @EventScope} will only see events that
- *       match <b>all</b> of the configured criteria (prefix AND lifecycle AND kind AND error mode).</li>
- *   <li>Events outside this scope are invisible to the component: its
- *       {@link OnEvent} methods will not match, and its {@link OnUnMatchedEvent}(COMPONENT)
- *       or {@link OnEveryEvent} methods will not fire.</li>
+ *   <li>A component annotated with {@code @EventScope} will only see events that match <b>all</b> of the configured
+ *       criteria (prefix AND lifecycle AND kind AND error mode).
+ *   <li>Events outside this scope are invisible to the component: its {@link OnEvent} methods will not match, and its
+ *       {@link OnUnMatchedEvent}(COMPONENT) or {@link OnEveryEvent} methods will not fire.
  * </ul>
  *
  * <h3>Name prefixes</h3>
+ *
  * <ul>
- *   <li>Each prefix is tested with {@code event.name().startsWith(prefix)}.</li>
- *   <li>If no prefixes are supplied, prefix filtering is not applied ("any").</li>
- *   <li>{@code value()} is an alias for {@code prefixes()} for brevity.</li>
+ *   <li>Each prefix is tested with {@code event.name().startsWith(prefix)}.
+ *   <li>If no prefixes are supplied, prefix filtering is not applied ("any").
+ *   <li>{@code value()} is an alias for {@code prefixes()} for brevity.
  * </ul>
  *
  * <h3>Lifecycles & kinds</h3>
+ *
  * <ul>
- *   <li>Empty arrays mean "any".</li>
+ *   <li>Empty arrays mean "any".
  * </ul>
  *
  * <h3>Error mode</h3>
+ *
  * <ul>
- *   <li>{@link ErrorMode#ANY}: ignore errors vs non-errors.</li>
- *   <li>{@link ErrorMode#ONLY_ERROR}: only events that have a Throwable.</li>
- *   <li>{@link ErrorMode#ONLY_NON_ERROR}: only events with no Throwable.</li>
+ *   <li>{@link ErrorMode#ANY}: ignore errors vs non-errors.
+ *   <li>{@link ErrorMode#ONLY_ERROR}: only events that have a Throwable.
+ *   <li>{@link ErrorMode#ONLY_NON_ERROR}: only events with no Throwable.
  * </ul>
  */
 @Target(ElementType.TYPE)

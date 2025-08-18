@@ -1,19 +1,25 @@
 package com.obsinity.telemetry.annotations;
 
-import java.lang.annotation.*;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 /**
  * Marks a class as a telemetry event handler component.
  *
  * <h2>Semantics</h2>
+ *
  * <ul>
- *   <li>Only beans annotated with {@code @TelemetryEventHandler} are scanned for
- *       {@link OnEvent}, {@link OnEveryEvent}, and {@link OnUnMatchedEvent} methods.</li>
- *   <li>May optionally be combined with {@link EventScope} to restrict the
- *       domain of events considered for this component.</li>
+ *   <li>Only beans annotated with {@code @TelemetryEventHandler} are scanned for {@link OnEvent}, {@link OnEveryEvent},
+ *       and {@link OnUnMatchedEvent} methods.
+ *   <li>May optionally be combined with {@link EventScope} to restrict the domain of events considered for this
+ *       component.
  * </ul>
  *
  * <h2>Usage</h2>
+ *
  * <pre>{@code
  * @TelemetryEventHandler
  * public class OrderHandlers {
@@ -32,5 +38,4 @@ import java.lang.annotation.*;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
-public @interface TelemetryEventHandler {
-}
+public @interface TelemetryEventHandler {}

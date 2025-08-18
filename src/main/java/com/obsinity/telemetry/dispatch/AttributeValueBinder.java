@@ -32,6 +32,7 @@ public final class AttributeValueBinder implements ParamBinder {
 
 	@Override
 	public String toString() {
-		return "AttributeValueBinder[" + key + " -> " + (targetType == null ? "Object" : targetType.getSimpleName()) + "]";
+		return "AttributeValueBinder[" + key + " -> " + (targetType == null ? "Object" : targetType.getSimpleName())
+				+ "]";
 	}
 }

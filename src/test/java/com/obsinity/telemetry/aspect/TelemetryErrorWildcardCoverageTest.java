@@ -1,5 +1,22 @@
 package com.obsinity.telemetry.aspect;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ListableBeanFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.EnableAspectJAutoProxy;
+
+import io.opentelemetry.api.trace.SpanKind;
 import com.obsinity.telemetry.annotations.BindEventThrowable;
 import com.obsinity.telemetry.annotations.DispatchMode;
 import com.obsinity.telemetry.annotations.Flow;
@@ -18,27 +35,11 @@ import com.obsinity.telemetry.processor.TelemetryContext;
 import com.obsinity.telemetry.processor.TelemetryProcessor;
 import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
-import io.opentelemetry.api.trace.SpanKind;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ListableBeanFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.EnableAspectJAutoProxy;
-
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CopyOnWriteArrayList;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest(
-	classes = TelemetryErrorWildcardCoverageTest.CoverageConfig.class,
-	webEnvironment = SpringBootTest.WebEnvironment.NONE,
-	properties = {"spring.main.web-application-type=none"})
+		classes = TelemetryErrorWildcardCoverageTest.CoverageConfig.class,
+		webEnvironment = SpringBootTest.WebEnvironment.NONE,
+		properties = {"spring.main.web-application-type=none"})
 class TelemetryErrorWildcardCoverageTest {
 
 	@Configuration(proxyBeanMethods = false)
@@ -84,14 +85,14 @@ class TelemetryErrorWildcardCoverageTest {
 
 		@Bean
 		TelemetryProcessor telemetryProcessor(
-			TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
+				TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
 			return new TelemetryProcessor(binder, support, bus) {
 				@Override
 				protected OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
 					return new OAttributes(Map.of(
-						"test.flow", opts.name(),
-						"declaring.class", pjp.getSignature().getDeclaringTypeName(),
-						"declaring.method", pjp.getSignature().getName()));
+							"test.flow", opts.name(),
+							"declaring.class", pjp.getSignature().getDeclaringTypeName(),
+							"declaring.method", pjp.getSignature().getName()));
 				}
 			};
 		}
@@ -102,11 +103,20 @@ class TelemetryErrorWildcardCoverageTest {
 			return new TelemetryAspect(p);
 		}
 
-		@Bean ErrFlows flows(TelemetryContext ctx) { return new ErrFlows(ctx); }
+		@Bean
+		ErrFlows flows(TelemetryContext ctx) {
+			return new ErrFlows(ctx);
+		}
 
-		@Bean UnmatchedReceiver unmatchedReceiver() { return new UnmatchedReceiver(); }
+		@Bean
+		UnmatchedReceiver unmatchedReceiver() {
+			return new UnmatchedReceiver();
+		}
 
-		@Bean NormalReceivers normalReceivers() { return new NormalReceivers(); }
+		@Bean
+		NormalReceivers normalReceivers() {
+			return new NormalReceivers();
+		}
 	}
 
 	/* ------------ App under test ------------ */
@@ -114,33 +124,40 @@ class TelemetryErrorWildcardCoverageTest {
 	@Kind(SpanKind.SERVER)
 	static class ErrFlows {
 		private final TelemetryContext telemetry;
-		ErrFlows(TelemetryContext telemetry) { this.telemetry = telemetry; }
+
+		ErrFlows(TelemetryContext telemetry) {
+			this.telemetry = telemetry;
+		}
 
 		@Flow(name = "err.alpha")
-		public void alpha() { throw new IllegalArgumentException("alpha-fail"); }
+		public void alpha() {
+			throw new IllegalArgumentException("alpha-fail");
+		}
 
 		@Flow(name = "err.beta")
-		public void beta() { throw new IllegalStateException("beta-fail"); }
+		public void beta() {
+			throw new IllegalStateException("beta-fail");
+		}
 
 		@Flow(name = "ok.gamma")
-		public void gamma() { /* no-op */ }
+		public void gamma() {
+			/* no-op */
+		}
 	}
 
 	/**
-	 * Global fallbacks: run when no named handlers matched across any component.
-	 * We capture three kinds:
-	 *  - FAILURE (with Throwable)
-	 *  - COMBINED at FLOW_FINISHED
-	 *  - SUCCESS at FLOW_FINISHED (should NOT fire when a named success handler exists)
+	 * Global fallbacks: run when no named handlers matched across any component. We capture three kinds: - FAILURE
+	 * (with Throwable) - COMBINED at FLOW_FINISHED - SUCCESS at FLOW_FINISHED (should NOT fire when a named success
+	 * handler exists)
 	 */
 	@TelemetryEventHandler
 	static class UnmatchedReceiver {
 		final List<TelemetryHolder> failureCalls = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> failureCallsAllLifeCycles = new CopyOnWriteArrayList<>();
-		final List<Throwable>       failures     = new CopyOnWriteArrayList<>();
-		final List<Throwable>       failuresAllLifeCycles     = new CopyOnWriteArrayList<>();
+		final List<Throwable> failures = new CopyOnWriteArrayList<>();
+		final List<Throwable> failuresAllLifeCycles = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> combinedFinishCalls = new CopyOnWriteArrayList<>();
-		final List<TelemetryHolder> successFinishCalls  = new CopyOnWriteArrayList<>();
+		final List<TelemetryHolder> successFinishCalls = new CopyOnWriteArrayList<>();
 
 		@OnUnMatchedEvent(scope = OnUnMatchedEvent.Scope.GLOBAL, mode = DispatchMode.FAILURE)
 		public void onAnyFailure(@BindEventThrowable Throwable ex, TelemetryHolder holder) {
@@ -148,53 +165,68 @@ class TelemetryErrorWildcardCoverageTest {
 			failureCallsAllLifeCycles.add(holder);
 		}
 
-		@OnUnMatchedEvent(scope = OnUnMatchedEvent.Scope.GLOBAL, lifecycle = {Lifecycle.FLOW_FINISHED}, mode = DispatchMode.FAILURE)
+		@OnUnMatchedEvent(
+				scope = OnUnMatchedEvent.Scope.GLOBAL,
+				lifecycle = {Lifecycle.FLOW_FINISHED},
+				mode = DispatchMode.FAILURE)
 		public void onAnyFlowFinishedFailure(@BindEventThrowable Throwable ex, TelemetryHolder holder) {
 			failures.add(ex);
 			failureCalls.add(holder);
 		}
 
-		@OnUnMatchedEvent(scope = OnUnMatchedEvent.Scope.GLOBAL,
-			lifecycle = {Lifecycle.FLOW_FINISHED}, mode = DispatchMode.COMBINED)
+		@OnUnMatchedEvent(
+				scope = OnUnMatchedEvent.Scope.GLOBAL,
+				lifecycle = {Lifecycle.FLOW_FINISHED},
+				mode = DispatchMode.COMBINED)
 		public void onAnyFinishCombined(TelemetryHolder holder) {
 			combinedFinishCalls.add(holder);
 		}
 
-		@OnUnMatchedEvent(scope = OnUnMatchedEvent.Scope.GLOBAL,
-			lifecycle = {Lifecycle.FLOW_FINISHED}, mode = DispatchMode.SUCCESS)
+		@OnUnMatchedEvent(
+				scope = OnUnMatchedEvent.Scope.GLOBAL,
+				lifecycle = {Lifecycle.FLOW_FINISHED},
+				mode = DispatchMode.SUCCESS)
 		public void onAnyFinishSuccess(TelemetryHolder holder) {
 			successFinishCalls.add(holder);
 		}
 	}
 
 	/**
-	 * Named (non-fallback) handlers. Only a SUCCESS handler for ok.gamma to prove:
-	 * - failure fallbacks still fire for err.* (no eligible named failure)
-	 * - combined fallback at finish fires for err.* but not for ok.gamma
+	 * Named (non-fallback) handlers. Only a SUCCESS handler for ok.gamma to prove: - failure fallbacks still fire for
+	 * err.* (no eligible named failure) - combined fallback at finish fires for err.* but not for ok.gamma
 	 */
 	@TelemetryEventHandler
 	static class NormalReceivers {
 		final List<TelemetryHolder> normals = new CopyOnWriteArrayList<>();
 
-		@OnEvent(name = "ok.gamma", lifecycle = {Lifecycle.FLOW_FINISHED}, mode = DispatchMode.SUCCESS)
-		public void onGamma(TelemetryHolder h) { normals.add(h); }
+		@OnEvent(
+				name = "ok.gamma",
+				lifecycle = {Lifecycle.FLOW_FINISHED},
+				mode = DispatchMode.SUCCESS)
+		public void onGamma(TelemetryHolder h) {
+			normals.add(h);
+		}
 	}
 
-	@Autowired ErrFlows flows;
-	@Autowired UnmatchedReceiver unmatched;
+	@Autowired
+	ErrFlows flows;
+
+	@Autowired
+	UnmatchedReceiver unmatched;
 
 	@Test
-	@DisplayName("Global fallbacks: FAILURE fires for err.*, COMBINED finish fires for err.* only, SUCCESS finish suppressed by named")
+	@DisplayName(
+			"Global fallbacks: FAILURE fires for err.*, COMBINED finish fires for err.* only, SUCCESS finish suppressed by named")
 	void globalFallbacks_workAsExpected() {
 		// err.alpha → exception path
 		assertThatThrownBy(() -> flows.alpha())
-			.isInstanceOf(IllegalArgumentException.class)
-			.hasMessageContaining("alpha-fail");
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("alpha-fail");
 
 		// err.beta → exception path
 		assertThatThrownBy(() -> flows.beta())
-			.isInstanceOf(IllegalStateException.class)
-			.hasMessageContaining("beta-fail");
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessageContaining("beta-fail");
 
 		// ok.gamma → normal path with a named SUCCESS handler at FLOW_FINISHED
 		flows.gamma();
@@ -206,8 +238,10 @@ class TelemetryErrorWildcardCoverageTest {
 		assertThat(unmatched.failures).hasSize(2);
 
 		// COMBINED global unmatched at finish: fires for error flows (2), NOT for ok.gamma (named handler exists)
-		assertThat(unmatched.combinedFinishCalls.stream().map(TelemetryHolder::name).toList())
-			.containsExactlyInAnyOrder("err.alpha", "err.beta");
+		assertThat(unmatched.combinedFinishCalls.stream()
+						.map(TelemetryHolder::name)
+						.toList())
+				.containsExactlyInAnyOrder("err.alpha", "err.beta");
 
 		// SUCCESS global unmatched at finish should be suppressed because ok.gamma had a named SUCCESS handler
 		assertThat(unmatched.successFinishCalls).isEmpty();
