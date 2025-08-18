@@ -83,19 +83,35 @@ public class TelemetryProcessorSupport {
 
 	/* --------------------- batch helpers --------------------- */
 
+	/** Start a fresh batch for a new root flow. */
 	void startNewBatch() {
 		batch.set(new ArrayList<>());
 	}
 
+	/** Add a holder to the current root batch if present. */
 	void addToBatch(final TelemetryHolder holder) {
 		final List<TelemetryHolder> list = batch.get();
 		if (list != null && holder != null) list.add(holder);
 	}
 
+	/**
+	 * Return the current batch as-is (may be empty). <b>Does not clear.</b>
+	 * Clearing must be done by {@link #clearBatchAfterDispatch()} after dispatch completes.
+	 */
 	List<TelemetryHolder> finishBatchAndGet() {
-		final List<TelemetryHolder> out = batch.get();
-		batch.remove(); // clean slate for the next root
-		return out;
+		return batch.get();
+	}
+
+	/** Convenience accessor if a binder prefers non-null/immutable empty. */
+	public List<TelemetryHolder> getBatch() {
+		return batch.get();
+	}
+
+	/** Clear the batch <b>after</b> ROOT_FLOW_FINISHED dispatch so binders can read it during invocation. */
+	void clearBatchAfterDispatch() {
+		batch.remove();
+		// re-initialize to avoid extra allocations on the next root
+		batch.set(new ArrayList<>());
 	}
 
 	/* --------------------- mutation helpers --------------------- */
@@ -131,9 +147,10 @@ public class TelemetryProcessorSupport {
 	void logOrphanStep(final String stepName, final OrphanAlert.Level level) {
 		final OrphanAlert.Level lvl = (level != null ? level : OrphanAlert.Level.ERROR);
 		switch (lvl) {
+			case TRACE -> log.trace("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
 			case ERROR -> log.error("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
-			case WARN -> log.warn("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
-			case INFO -> log.info("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
+			case WARN  -> log.warn ("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
+			case INFO  -> log.info ("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
 			case DEBUG -> log.debug("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
 		}
 	}

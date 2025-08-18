@@ -29,6 +29,7 @@ public @interface OrphanAlert {
 	/** Simple log level enum decoupled from specific logging frameworks. */
 	enum Level {
 		NONE,
+		TRACE,
 		ERROR,
 		WARN,
 		INFO,

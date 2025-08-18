@@ -75,10 +75,10 @@ class TelemetryOnEventParamBindingTest {
 			return new TelemetryProcessorSupport();
 		}
 
-		// NEW: build handler groups using the updated scanner API (needs the bean factory)
 		@Bean
-		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory) {
-			return new TelemetryEventHandlerScanner(beanFactory).handlerGroups();
+		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory,
+										 TelemetryProcessorSupport support) {
+			return new TelemetryEventHandlerScanner(beanFactory, support).handlerGroups();
 		}
 
 		// NEW: bus now takes just the groups

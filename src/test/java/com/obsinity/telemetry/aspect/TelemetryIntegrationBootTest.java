@@ -91,10 +91,10 @@ class TelemetryIntegrationBootTest {
 			return new TelemetryProcessorSupport();
 		}
 
-		// Build handler groups with the updated scanner API
 		@Bean
-		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory) {
-			return new TelemetryEventHandlerScanner(beanFactory).handlerGroups();
+		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory,
+										 TelemetryProcessorSupport support) {
+			return new TelemetryEventHandlerScanner(beanFactory, support).handlerGroups();
 		}
 
 		/** Build the dispatch bus that routes to handlers. */

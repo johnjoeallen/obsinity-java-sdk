@@ -1,8 +1,5 @@
-// file: src/main/java/com/obsinity/telemetry/dispatch/TelemetryEventHandlerScanner.java
 package com.obsinity.telemetry.dispatch;
 
-import com.obsinity.telemetry.annotations.DispatchMode;
-import com.obsinity.telemetry.annotations.EventScope;
 import com.obsinity.telemetry.annotations.OnEveryEvent;
 import com.obsinity.telemetry.annotations.OnEvent;
 import com.obsinity.telemetry.annotations.OnUnMatchedEvent;
@@ -10,8 +7,10 @@ import com.obsinity.telemetry.annotations.PullAllContextValues;
 import com.obsinity.telemetry.annotations.PullAttribute;
 import com.obsinity.telemetry.annotations.PullContextValue;
 import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+import com.obsinity.telemetry.annotations.DispatchMode;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
+import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import io.opentelemetry.api.trace.SpanKind;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.ListableBeanFactory;
@@ -36,20 +35,20 @@ import java.util.stream.Collectors;
 /**
  * Scans Spring beans annotated with {@link TelemetryEventHandler} and produces a registry of {@link HandlerGroup}s.
  *
- * Includes:
- *  - @EventScope support (component-level gating: prefix + lifecycle + kind + error mode)
- *  - Fail-fast validation (duplicate @OnEvent slots, Pull* exclusivity, ROOT batch usage, SUCCESS+throwable filters)
+ * <p>Includes fail-fast validation to catch common misconfigurations and exact duplicate @OnEvent registrations.
+ *
+ * <p>Special binding: methods that declare a {@code List<TelemetryHolder>} parameter for
+ * {@code lifecycle=ROOT_FLOW_FINISHED} receive the full batch from {@link TelemetryProcessorSupport#getBatch()}.
  */
 @Configuration
 public class TelemetryEventHandlerScanner {
 
-	/** Key used by the bus to stash the root batch (List<TelemetryHolder>) into the holder's eventContext. */
-	static final String ROOT_BATCH_CTX_KEY = "__root_batch";
-
 	private final ListableBeanFactory beanFactory;
+	private final TelemetryProcessorSupport support;
 
-	public TelemetryEventHandlerScanner(ListableBeanFactory beanFactory) {
+	public TelemetryEventHandlerScanner(ListableBeanFactory beanFactory, TelemetryProcessorSupport support) {
 		this.beanFactory = beanFactory;
+		this.support = support;
 	}
 
 	@Bean
@@ -62,28 +61,25 @@ public class TelemetryEventHandlerScanner {
 			Class<?> userClass = AopUtils.getTargetClass(bean);
 			String componentName = userClass.getSimpleName();
 
-			// Build group + attach component-level EventScope (defaults to allow-all)
 			HandlerGroup group = new HandlerGroup(componentName);
-			applyEventScopeIfPresent(userClass, group);
 
-			// Track exact @OnEvent duplicates: key = name|phase|mode -> handlers
+			// Track exact @OnEvent duplicates: key = name|phase|mode -> handlers (for this component only)
 			Map<String, List<String>> onEventKeysToHandlers = new LinkedHashMap<>();
 
-			// --- @OnEvent ---
+			// @OnEvent
 			for (Method m : methodsAnnotated(userClass, OnEvent.class)) {
 				OnEvent a = m.getAnnotation(OnEvent.class);
 				validateOnEventMethod(userClass, m, a);
 
 				String exactName = a.name();
 				DispatchMode mode = a.mode();
-				Lifecycle[] phases =
-					(a.lifecycle() == null || a.lifecycle().length == 0) ? Lifecycle.values() : a.lifecycle();
+				Lifecycle[] phases = (a.lifecycle() == null || a.lifecycle().length == 0)
+					? Lifecycle.values() : a.lifecycle();
 
 				// record keys for duplicate detection
 				for (Lifecycle p : phases) {
 					String dupKey = dupKey(exactName, p, mode);
-					onEventKeysToHandlers
-						.computeIfAbsent(dupKey, k -> new ArrayList<>())
+					onEventKeysToHandlers.computeIfAbsent(dupKey, k -> new ArrayList<>())
 						.add(userClass.getSimpleName() + "#" + m.getName());
 				}
 
@@ -92,14 +88,12 @@ public class TelemetryEventHandlerScanner {
 					group.registerOnEvent(exactName, p, mode, h);
 				}
 			}
-
-			// Fail fast if any exact duplicates detected for this component
 			validateNoExactOnEventDuplicates(userClass, onEventKeysToHandlers);
 
-			// --- @OnEveryEvent (taps) ---
+			// @OnEveryEvent (taps)
 			for (Method m : methodsAnnotated(userClass, OnEveryEvent.class)) {
 				OnEveryEvent a = m.getAnnotation(OnEveryEvent.class);
-				validateBatchParamIfPresent(userClass, m, a.lifecycle(), /*isOnEvent*/ false, "@OnEveryEvent");
+				validateBatchParamIfPresent(userClass, m, a.lifecycle(), false, "@OnEveryEvent");
 
 				DispatchMode mode = a.mode();
 				Lifecycle[] phases = (a.lifecycle() == null) ? new Lifecycle[0] : a.lifecycle();
@@ -112,13 +106,13 @@ public class TelemetryEventHandlerScanner {
 				}
 			}
 
-			// --- @OnUnMatchedEvent ---
+			// @OnUnMatchedEvent
 			for (Method m : methodsAnnotated(userClass, OnUnMatchedEvent.class)) {
 				OnUnMatchedEvent a = m.getAnnotation(OnUnMatchedEvent.class);
-				validateBatchParamIfPresent(userClass, m, a.lifecycle(), /*isOnEvent*/ false, "@OnUnMatchedEvent");
+				validateBatchParamIfPresent(userClass, m, a.lifecycle(), false, "@OnUnMatchedEvent");
 
-				Lifecycle[] phases =
-					(a.lifecycle() == null || a.lifecycle().length == 0) ? Lifecycle.values() : a.lifecycle();
+				Lifecycle[] phases = (a.lifecycle() == null || a.lifecycle().length == 0)
+					? Lifecycle.values() : a.lifecycle();
 				DispatchMode mode = a.mode();
 
 				Handler h = buildOnUnmatchedHandler(bean, userClass, m, mode, phases);
@@ -139,44 +133,16 @@ public class TelemetryEventHandlerScanner {
 	}
 
 	/* =========================
-	   EventScope wiring
-	   ========================= */
-
-	private static void applyEventScopeIfPresent(Class<?> userClass, HandlerGroup group) {
-		EventScope s = userClass.getAnnotation(EventScope.class);
-		if (s == null) {
-			group.setScope(HandlerGroup.Scope.allowAll());
-			return;
-		}
-		// aliases value() and prefixes() are equivalent; use prefixes()
-		String[] prefixes = s.prefixes();
-		Lifecycle[] lifecycles = s.lifecycles();
-		SpanKind[] kinds = s.kinds();
-		EventScope.ErrorMode em = s.errorMode();
-
-		HandlerGroup.Scope compiled = HandlerGroup.Scope.of(
-			(prefixes == null ? new String[0] : prefixes),
-			(lifecycles == null ? new Lifecycle[0] : lifecycles),
-			(kinds == null ? new SpanKind[0] : kinds),
-			em
-		);
-		group.setScope(compiled);
-	}
-
-	/* =========================
 	   Handler builders
 	   ========================= */
 
-	private static Handler buildOnEventHandler(
+	private Handler buildOnEventHandler(
 		Object bean, Class<?> userClass, Method m, String exactName, DispatchMode mode, OnEvent a) {
-
 		BitSet lifecycleMask = bitsetForLifecycles(a.lifecycle());
 		BitSet kindMask = bitsetForKinds(a.kinds());
 
 		List<Class<? extends Throwable>> throwableTypes =
-			(a.throwableTypes() == null || a.throwableTypes().length == 0)
-				? List.of()
-				: List.of(a.throwableTypes());
+			(a.throwableTypes() == null || a.throwableTypes().length == 0) ? List.of() : List.of(a.throwableTypes());
 
 		boolean includeSubclasses = a.includeSubclasses();
 		Pattern messagePattern =
@@ -190,42 +156,39 @@ public class TelemetryEventHandlerScanner {
 		}
 
 		List<ParamBinder> binders = buildParamBinders(m);
-		Set<String> requiredAttrs = Set.of();
 		String id = userClass.getSimpleName() + "#" + m.getName();
 
 		return new Handler(
 			bean, m, exactName, lifecycleMask, kindMask, mode,
 			throwableTypes, includeSubclasses, messagePattern, causeTypeOrNull,
-			binders, requiredAttrs, id
+			binders, /*requiredAttrs*/ Set.of(), id
 		);
 	}
 
-	private static Handler buildOnEveryEventHandler(
+	private Handler buildOnEveryEventHandler(
 		Object bean, Class<?> userClass, Method m, DispatchMode mode, OnEveryEvent a) {
 		BitSet lifecycleMask = bitsetForLifecycles(a.lifecycle());
 		BitSet kindMask = bitsetForKinds(a.kinds());
 
 		List<ParamBinder> binders = buildParamBinders(m);
-		Set<String> requiredAttrs = Set.of();
 		String id = userClass.getSimpleName() + "#" + m.getName();
 
 		return new Handler(
 			bean, m, null, lifecycleMask, kindMask, mode,
 			List.of(), true, null, null,
-			binders, requiredAttrs, id
+			binders, /*requiredAttrs*/ Set.of(), id
 		);
 	}
 
-	private static Handler buildOnUnmatchedHandler(
+	private Handler buildOnUnmatchedHandler(
 		Object bean, Class<?> userClass, Method m, DispatchMode mode, Lifecycle[] lifecycles) {
 		List<ParamBinder> binders = buildParamBinders(m);
-		Set<String> requiredAttrs = Set.of();
 		String id = userClass.getSimpleName() + "#" + m.getName();
 
 		return new Handler(
 			bean, m, null, bitsetForLifecycles(lifecycles), null, mode,
 			List.of(), true, null, null,
-			binders, requiredAttrs, id
+			binders, /*requiredAttrs*/ Set.of(), id
 		);
 	}
 
@@ -233,7 +196,7 @@ public class TelemetryEventHandlerScanner {
 	   Param binding (annotation-aware)
 	   ========================= */
 
-	private static List<ParamBinder> buildParamBinders(Method m) {
+	private List<ParamBinder> buildParamBinders(Method m) {
 		Class<?>[] pts = m.getParameterTypes();
 		Type[] gpts = m.getGenericParameterTypes();
 		Annotation[][] pann = m.getParameterAnnotations();
@@ -249,20 +212,18 @@ public class TelemetryEventHandlerScanner {
 			// 1) Annotation-driven binders first
 			ParamBinder b = buildAnnotationBinder(pt, anns);
 
-			// 2) Special case: List<TelemetryHolder> for ROOT_FLOW_FINISHED batch injection
+			// 2) Special case: List<TelemetryHolder> for ROOT_FLOW_FINISHED batch injection (sourced from support)
 			if (b == null && List.class.isAssignableFrom(pt) && gpts[i] instanceof ParameterizedType ptype) {
 				Type[] args = ptype.getActualTypeArguments();
 				if (args.length == 1 && args[0] instanceof Class<?> c && TelemetryHolder.class.isAssignableFrom(c)) {
 					b = (holder, phase, error) -> {
-						if (holder == null || phase != Lifecycle.ROOT_FLOW_FINISHED) return null;
-						Map<String, Object> ctx = holder.getEventContext();
-						Object v = (ctx == null) ? null : ctx.get(ROOT_BATCH_CTX_KEY);
-						if (v instanceof List<?> list) {
-							@SuppressWarnings("unchecked")
-							List<TelemetryHolder> cast = (List<TelemetryHolder>) list;
-							return cast;
+						if (phase != Lifecycle.ROOT_FLOW_FINISHED) return null;
+						try {
+							List<TelemetryHolder> batch = support.getBatch();
+							return (batch == null || batch.isEmpty()) ? null : batch;
+						} catch (Throwable t) {
+							return null;
 						}
-						return null;
 					};
 				}
 			}
@@ -302,7 +263,7 @@ public class TelemetryEventHandlerScanner {
 					return castIfPossible(pt, v);
 				};
 			}
-			// @PullContextValue("key") — context is a Map<String,Object>
+			// @PullContextValue("key")
 			if (a instanceof PullContextValue pcv) {
 				final String key = firstNonBlank(pcv.value(), pcv.name());
 				if (isBlank(key)) return (h, p, e) -> null;
@@ -319,10 +280,9 @@ public class TelemetryEventHandlerScanner {
 					return (holder, phase, error) -> {
 						if (holder == null) return Map.of();
 						Map<String, Object> ctx = holder.getEventContext();
-						return (ctx == null) ? Map.of() : new LinkedHashMap<>(ctx);
+						return (ctx == null) ? Map.of() : new java.util.LinkedHashMap<>(ctx);
 					};
 				}
-				// Unsupported param type for @PullAllContextValues
 				return (h, p, e) -> null;
 			}
 		}
@@ -370,7 +330,10 @@ public class TelemetryEventHandlerScanner {
 		boolean hasRoot = false;
 		if (lifecycles != null && lifecycles.length > 0) {
 			for (Lifecycle lc : lifecycles) {
-				if (lc == Lifecycle.ROOT_FLOW_FINISHED) { hasRoot = true; break; }
+				if (lc == Lifecycle.ROOT_FLOW_FINISHED) {
+					hasRoot = true;
+					break;
+				}
 			}
 		}
 		if (!hasRoot) {
@@ -384,7 +347,7 @@ public class TelemetryEventHandlerScanner {
 				errPrefix(userClass, m) + "at most one List<TelemetryHolder> parameter is allowed");
 		}
 
-		// Guard: onEvent already checked separately, but keep consistent API
+		// Guard: we keep semantics symmetrical (no @OnEvent with batch)
 		if (isOnEvent) {
 			throw new IllegalStateException(
 				errPrefix(userClass, m) + where + " cannot be @OnEvent when using List<TelemetryHolder>");
@@ -475,7 +438,7 @@ public class TelemetryEventHandlerScanner {
 	private static List<Method> methodsAnnotated(Class<?> c, Class<? extends Annotation> ann) {
 		return Arrays.stream(c.getMethods())
 			.filter(m -> m.isAnnotationPresent(ann))
-			.toList();
+			.collect(Collectors.toList());
 	}
 
 	private static BitSet bitsetForLifecycles(Lifecycle[] lifecycles) {

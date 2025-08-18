@@ -66,10 +66,10 @@ class TelemetryErrorWildcardCoverageTest {
 			return new TelemetryProcessorSupport();
 		}
 
-		// NEW: build the handler groups using the updated scanner API
 		@Bean
-		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory) {
-			return new TelemetryEventHandlerScanner(beanFactory).handlerGroups();
+		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory,
+										 TelemetryProcessorSupport support) {
+			return new TelemetryEventHandlerScanner(beanFactory, support).handlerGroups();
 		}
 
 		// Bus now only needs the groups
