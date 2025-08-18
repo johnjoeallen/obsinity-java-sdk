@@ -20,6 +20,9 @@ public class TelemetryDispatchBus {
 
 	private static final Logger log = LoggerFactory.getLogger(TelemetryDispatchBus.class);
 
+	/** Must match TelemetryEventHandlerScanner.ROOT_BATCH_CTX_KEY */
+	private static final String ROOT_BATCH_CTX_KEY = "__root_batch";
+
 	private final List<HandlerGroup> groups;
 
 	public TelemetryDispatchBus(List<HandlerGroup> groups) {
@@ -40,11 +43,14 @@ public class TelemetryDispatchBus {
 	public void rootFlowFinished(List<TelemetryHolder> completed) {
 		log.debug("BUS: rootFlowFinished batch size={} names={}",
 			(completed == null ? 0 : completed.size()),
-			completed == null ? "[]" : completed.stream().map(TelemetryHolder::name).toList());
+			(completed == null) ? "[]" : completed.stream().map(TelemetryHolder::name).toList());
+
 		if (completed == null) return;
+
 		for (TelemetryHolder h : completed) {
-			// Only dispatch a root holder here
+			// Only dispatch root holder on ROOT_FLOW_FINISHED
 			if (h != null && h.parentSpanId() == null) {
+				attachRootBatchToHolder(h, completed);
 				dispatch(h, Lifecycle.ROOT_FLOW_FINISHED);
 			}
 		}
@@ -85,15 +91,15 @@ public class TelemetryDispatchBus {
 				i, componentName, tapsCombined, tapsSuccess, tapsFailure);
 			runTaps(g, phase, holder, failed, i, componentName);
 
-			// 1.2) Dot-chop match ON EVENT (NO ROOT→FLOW fallback)
+			// 1.2) Dot-chop match ON EVENT (no phase fallback)
 			ModeBuckets chosen = g.findNearestEligibleTier(phase, eventName, holder, failed, error);
 			log.debug("BUS: component[{}]='{}' tier found?={}", i, componentName, chosen != null);
 			if (chosen != null) {
 				log.debug("BUS: component[{}]='{}' tier bucket sizes: combined={} success={} failure={}",
 					i, componentName,
-					chosen.combined == null ? 0 : chosen.combined.size(),
-					chosen.success  == null ? 0 : chosen.success.size(),
-					chosen.failure  == null ? 0 : chosen.failure.size());
+					(chosen.combined == null ? 0 : chosen.combined.size()),
+					(chosen.success  == null ? 0 : chosen.success.size()),
+					(chosen.failure  == null ? 0 : chosen.failure.size()));
 			}
 
 			if (chosen != null) {
@@ -147,7 +153,7 @@ public class TelemetryDispatchBus {
 
 				if (matchedHere) anyMatchedByOnEvent = true;
 			} else {
-				// No tier -> try component-scoped unmatched ONLY for the current phase (NO ROOT→FLOW fallback)
+				// No tier -> try component-scoped unmatched ONLY for the current phase
 				boolean invoked = invokeComponentUnmatched(g, phase, holder, failed, error, i, componentName);
 				anyComponentUnmatched |= invoked;
 				log.debug("BUS: component[{}]='{}' no tier -> component-unmatched invoked={}",
@@ -157,7 +163,7 @@ public class TelemetryDispatchBus {
 			log.debug("BUS: component[{}]='{}' end", i, componentName);
 		}
 
-		// 2) GLOBAL unmatched: only if no @OnEvent matched anywhere AND no component unmatched fired (NO ROOT→FLOW fallback)
+		// 2) GLOBAL unmatched: only if no @OnEvent matched anywhere AND no component unmatched fired
 		if (!anyMatchedByOnEvent && !anyComponentUnmatched) {
 			boolean invoked = invokeGlobalUnmatchedAcrossAllComponents(phase, holder, failed, error);
 			log.debug("BUS: global-unmatched invoked={} (no @OnEvent matched and no component-unmatched)", invoked);
@@ -172,6 +178,56 @@ public class TelemetryDispatchBus {
 	}
 
 	// === Helpers ===
+
+	/** Attach the full ROOT batch into the root holder’s event context under ROOT_BATCH_CTX_KEY. */
+	@SuppressWarnings("unchecked")
+	private void attachRootBatchToHolder(TelemetryHolder holder, List<TelemetryHolder> batch) {
+		if (holder == null) return;
+		try {
+			Method getter;
+			try { getter = holder.getClass().getMethod("getEventContext"); }
+			catch (NoSuchMethodException ignored) { getter = holder.getClass().getMethod("eventContext"); }
+
+			Object ctx = getter.invoke(holder);
+			if (ctx == null) {
+				log.debug("BUS: no event context on holder name='{}'; cannot attach root batch", holder.name());
+				return;
+			}
+
+			// Try Map.put directly (context might actually be a Map)
+			try {
+				if (ctx instanceof Map) {
+					((Map<String, Object>) ctx).put(ROOT_BATCH_CTX_KEY, batch);
+					log.debug("BUS: attached ROOT batch (size={}) via Map.put", (batch == null ? 0 : batch.size()));
+					return;
+				}
+			} catch (Throwable ignored) { /* fall through */ }
+
+			// Try context.asMap().put(...)
+			try {
+				Method asMap = ctx.getClass().getMethod("asMap");
+				Object m = asMap.invoke(ctx);
+				if (m instanceof Map) {
+					((Map<String, Object>) m).put(ROOT_BATCH_CTX_KEY, batch);
+					log.debug("BUS: attached ROOT batch (size={}) via asMap().put", (batch == null ? 0 : batch.size()));
+					return;
+				}
+			} catch (NoSuchMethodException ignored) {
+				// no asMap(); already tried Map above
+			}
+
+			// Try reflective put(Object,Object) just in case context exposes it but isn't a java.util.Map
+			try {
+				Method put = ctx.getClass().getMethod("put", Object.class, Object.class);
+				put.invoke(ctx, ROOT_BATCH_CTX_KEY, batch);
+				log.debug("BUS: attached ROOT batch (size={}) via reflective put", (batch == null ? 0 : batch.size()));
+			} catch (NoSuchMethodException ignored) {
+				log.debug("BUS: context type {} is not writable; batch not attached", ctx.getClass().getName());
+			}
+		} catch (Throwable t) {
+			log.warn("BUS: failed attaching root batch to holder name='{}': {}", holder.name(), t.toString());
+		}
+	}
 
 	/** Run @OnEveryEvent taps for this component. */
 	private void runTaps(HandlerGroup g, Lifecycle phase, TelemetryHolder holder, boolean failed,
@@ -346,8 +402,8 @@ public class TelemetryDispatchBus {
 
 		log.debug("BUS: holder dump phase={} name='{}' isStep={} failed={} attrs.size={} ctx.size={}",
 			phase, holder.name(), bool(holder.isStep()), holder.throwable() != null,
-			attrs == null ? 0 : attrs.size(),
-			ctx == null ? 0 : ctx.size());
+			(attrs == null ? 0 : attrs.size()),
+			(ctx == null ? 0 : ctx.size()));
 
 		if (attrs != null && !attrs.isEmpty()) {
 			log.debug("BUS: holder attrs -> {}", attrs);
@@ -455,6 +511,7 @@ public class TelemetryDispatchBus {
 		return "[]";
 	}
 
+	@SuppressWarnings("unchecked")
 	private static Map<String, Object> attrsMap(TelemetryHolder holder) {
 		try {
 			Object attrs = holder.attributes();
@@ -462,14 +519,13 @@ public class TelemetryDispatchBus {
 			Method asMap = attrs.getClass().getMethod("asMap");
 			Object m = asMap.invoke(attrs);
 			if (m instanceof Map<?, ?> map) {
-				@SuppressWarnings("unchecked")
-				Map<String, Object> cast = (Map<String, Object>) map;
-				return cast;
+				return (Map<String, Object>) map;
 			}
 		} catch (Throwable ignored) {}
 		return null;
 	}
 
+	@SuppressWarnings("unchecked")
 	private static Map<String, Object> ctxMap(TelemetryHolder holder) {
 		try {
 			Method getter;
@@ -484,15 +540,11 @@ public class TelemetryDispatchBus {
 				Method asMap = ctx.getClass().getMethod("asMap");
 				Object m = asMap.invoke(ctx);
 				if (m instanceof Map<?, ?> map) {
-					@SuppressWarnings("unchecked")
-					Map<String, Object> cast = (Map<String, Object>) map;
-					return cast;
+					return (Map<String, Object>) map;
 				}
 			} catch (NoSuchMethodException ignored) {
 				if (ctx instanceof Map<?, ?> map) {
-					@SuppressWarnings("unchecked")
-					Map<String, Object> cast = (Map<String, Object>) map;
-					return cast;
+					return (Map<String, Object>) map;
 				}
 			}
 		} catch (Throwable ignored) {}
