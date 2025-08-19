@@ -92,8 +92,7 @@ class TelemetryIntegrationBootTest {
 		}
 
 		@Bean
-		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory,
-										 TelemetryProcessorSupport support) {
+		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory, TelemetryProcessorSupport support) {
 			return new TelemetryEventHandlerScanner(beanFactory, support).handlerGroups();
 		}
 
@@ -330,7 +329,7 @@ class TelemetryIntegrationBootTest {
 
 		assertThat(stepEvent.attributes().asMap()).containsEntry("step.flag", true);
 		assertThat(stepEvent.eventContext()).containsEntry("step.ctx", "ctx-value");
-		assertThat(stepEvent.epochNanos()).isGreaterThan(0L);
+		assertThat(stepEvent.epochNanos()).isPositive();
 		assertThat(stepEvent.endEpochNanos()).isNotNull();
 	}
 

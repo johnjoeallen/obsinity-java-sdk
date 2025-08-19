@@ -20,6 +20,7 @@ import com.obsinity.telemetry.model.TelemetryHolder;
 public class TelemetryProcessorSupport {
 
 	private static final Logger log = LoggerFactory.getLogger(TelemetryProcessorSupport.class);
+	public static final String STEP_EXECUTED_WITH_NO_ACTIVE_FLOW_AUTO_PROMOTED_TO_FLOW = "Step '{}' executed with no active Flow; auto-promoted to Flow.";
 
 	/** Per-thread stack of active flows/holders (top = current). */
 	private final InheritableThreadLocal<Deque<TelemetryHolder>> ctx;
@@ -95,8 +96,8 @@ public class TelemetryProcessorSupport {
 	}
 
 	/**
-	 * Return the current batch as-is (may be empty). <b>Does not clear.</b>
-	 * Clearing must be done by {@link #clearBatchAfterDispatch()} after dispatch completes.
+	 * Return the current batch as-is (may be empty). <b>Does not clear.</b> Clearing must be done by
+	 * {@link #clearBatchAfterDispatch()} after dispatch completes.
 	 */
 	List<TelemetryHolder> finishBatchAndGet() {
 		return batch.get();
@@ -147,11 +148,12 @@ public class TelemetryProcessorSupport {
 	void logOrphanStep(final String stepName, final OrphanAlert.Level level) {
 		final OrphanAlert.Level lvl = (level != null ? level : OrphanAlert.Level.ERROR);
 		switch (lvl) {
-			case TRACE -> log.trace("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
-			case ERROR -> log.error("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
-			case WARN  -> log.warn ("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
-			case INFO  -> log.info ("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
-			case DEBUG -> log.debug("Step '{}' executed with no active Flow; auto-promoted to Flow.", stepName);
+			case TRACE -> log.trace(STEP_EXECUTED_WITH_NO_ACTIVE_FLOW_AUTO_PROMOTED_TO_FLOW, stepName);
+			case ERROR -> log.error(STEP_EXECUTED_WITH_NO_ACTIVE_FLOW_AUTO_PROMOTED_TO_FLOW, stepName);
+			case WARN -> log.warn(STEP_EXECUTED_WITH_NO_ACTIVE_FLOW_AUTO_PROMOTED_TO_FLOW, stepName);
+			case INFO -> log.info(STEP_EXECUTED_WITH_NO_ACTIVE_FLOW_AUTO_PROMOTED_TO_FLOW, stepName);
+			case DEBUG -> log.debug(STEP_EXECUTED_WITH_NO_ACTIVE_FLOW_AUTO_PROMOTED_TO_FLOW, stepName);
+			default -> log.error(STEP_EXECUTED_WITH_NO_ACTIVE_FLOW_AUTO_PROMOTED_TO_FLOW, stepName);
 		}
 	}
 }

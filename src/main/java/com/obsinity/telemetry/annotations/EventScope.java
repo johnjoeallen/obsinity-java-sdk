@@ -1,15 +1,15 @@
 package com.obsinity.telemetry.annotations;
 
-import org.springframework.core.annotation.AliasFor;
-
-import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.model.Lifecycle;
-
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+
+import org.springframework.core.annotation.AliasFor;
+
+import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.model.Lifecycle;
 
 /**
  * Declares a component-level filter (scope) for which events are even considered by this handler component.

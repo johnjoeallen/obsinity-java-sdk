@@ -67,8 +67,7 @@ class TelemetryErrorWildcardCoverageTest {
 		}
 
 		@Bean
-		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory,
-										 TelemetryProcessorSupport support) {
+		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory, TelemetryProcessorSupport support) {
 			return new TelemetryEventHandlerScanner(beanFactory, support).handlerGroups();
 		}
 

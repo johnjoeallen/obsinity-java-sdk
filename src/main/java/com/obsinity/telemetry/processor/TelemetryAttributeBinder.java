@@ -10,6 +10,7 @@ import java.util.function.BiConsumer;
 
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.obsinity.telemetry.annotations.PushAttribute;
@@ -39,6 +40,7 @@ public class TelemetryAttributeBinder {
 	}
 
 	/** Test/config constructor: matches config calling new TelemetryAttributeBinder(AttributeParamExtractor). */
+	@Autowired
 	public TelemetryAttributeBinder(AttributeParamExtractor extractor) {
 		this.extractor = extractor;
 	}

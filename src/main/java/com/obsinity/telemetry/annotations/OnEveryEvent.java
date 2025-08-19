@@ -1,13 +1,13 @@
 package com.obsinity.telemetry.annotations;
 
-import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.model.Lifecycle;
-
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+
+import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.model.Lifecycle;
 
 /**
  * Additive "tap" that sees every event (subject to filters) regardless of whether any @OnEvent matched. Never affects

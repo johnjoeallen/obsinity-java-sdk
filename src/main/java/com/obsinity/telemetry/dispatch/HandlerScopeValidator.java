@@ -8,11 +8,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import com.obsinity.telemetry.annotations.EventScope;
-import com.obsinity.telemetry.annotations.OnEvent;
-import com.obsinity.telemetry.annotations.OnEveryEvent;
-import com.obsinity.telemetry.annotations.OnUnMatchedEvent;
-import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.BeanCreationException;
 import org.springframework.beans.factory.ListableBeanFactory;
@@ -20,6 +15,11 @@ import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.stereotype.Component;
 
 import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.annotations.EventScope;
+import com.obsinity.telemetry.annotations.OnEvent;
+import com.obsinity.telemetry.annotations.OnEveryEvent;
+import com.obsinity.telemetry.annotations.OnUnMatchedEvent;
+import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.model.Lifecycle;
 
 /**
@@ -115,7 +115,7 @@ public class HandlerScopeValidator implements SmartInitializingSingleton {
 	private static List<Method> methodsAnnotated(Class<?> c, Class<? extends Annotation> ann) {
 		return Arrays.stream(c.getMethods())
 				.filter(m -> m.isAnnotationPresent(ann))
-				.collect(Collectors.toList());
+				.toList();
 	}
 
 	private static void validateOnEventAgainstScope(

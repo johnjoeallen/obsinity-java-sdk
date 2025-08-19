@@ -1,12 +1,7 @@
 package com.obsinity.telemetry.dispatch;
 
-import com.obsinity.telemetry.annotations.DispatchMode;
-import com.obsinity.telemetry.annotations.EventScope;
-import com.obsinity.telemetry.model.Lifecycle;
-import com.obsinity.telemetry.model.TelemetryHolder;
-import io.opentelemetry.api.trace.SpanKind;
-
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -14,16 +9,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.annotations.DispatchMode;
+import com.obsinity.telemetry.annotations.EventScope;
+import com.obsinity.telemetry.model.Lifecycle;
+import com.obsinity.telemetry.model.TelemetryHolder;
+
 /**
  * Per-component registry of handlers discovered by the scanner.
  *
- * Structure:
- * - tiers: dot-chop tiers for @OnEvent (exact name → nearest ancestor fallback).
- * - unmatched: component-scoped @OnUnMatchedEvent(scope=COMPONENT).
- * - globalUnmatched: global @OnUnMatchedEvent(scope=GLOBAL).
- * - taps: @OnEveryEvent (additive; always run).
+ * <p>Structure: - tiers: dot-chop tiers for @OnEvent (exact name → nearest ancestor fallback). - unmatched:
+ * component-scoped @OnUnMatchedEvent(scope=COMPONENT). - globalUnmatched: global @OnUnMatchedEvent(scope=GLOBAL). -
+ * taps: @OnEveryEvent (additive; always run).
  *
- * Optional: component-level EventScope filter (prefix + lifecycle + kind + error mode).
+ * <p>Optional: component-level EventScope filter (prefix + lifecycle + kind + error mode).
  */
 public final class HandlerGroup {
 
@@ -55,8 +54,12 @@ public final class HandlerGroup {
 	}
 
 	/** Accessor used by logging/diagnostics to identify the handler component. */
-	public String componentName() {
+	public String getComponentName() {
 		return this.componentName;
+	}
+
+	public Scope getScope() {
+		return scope;
 	}
 
 	/** Configure/override the component-level scope. Null means "allow all". */
@@ -70,13 +73,13 @@ public final class HandlerGroup {
 	}
 
 	/* =========================
-	   Registration (scanner)
-	   ========================= */
+	Registration (scanner)
+	========================= */
 
 	public void registerOnEvent(String exactName, Lifecycle phase, DispatchMode mode, Handler h) {
 		tiers.computeIfAbsent(exactName, k -> new ModeBucketsByPhase())
-			.forPhase(phase)
-			.add(mode, h);
+				.forPhase(phase)
+				.add(mode, h);
 	}
 
 	public void registerComponentUnmatched(Lifecycle phase, DispatchMode mode, Handler h) {
@@ -99,17 +102,16 @@ public final class HandlerGroup {
 	}
 
 	/* =========================
-	   Query (dispatcher)
-	   ========================= */
+	Query (dispatcher)
+	========================= */
 
 	/**
-	 * Dot-chop selection for this component:
-	 * - Try exact event name tier; if no eligible handlers in that tier, chop last segment and try again.
-	 * - Returns the first (nearest) tier that has ANY handlers registered for the given phase, regardless of eligibility;
-	 *   eligibility is checked by the dispatcher (mode + filters) before invocation.
+	 * Dot-chop selection for this component: - Try exact event name tier; if no eligible handlers in that tier, chop
+	 * last segment and try again. - Returns the first (nearest) tier that has ANY handlers registered for the given
+	 * phase, regardless of eligibility; eligibility is checked by the dispatcher (mode + filters) before invocation.
 	 */
-	public ModeBuckets findNearestEligibleTier(Lifecycle phase, String eventName,
-											   TelemetryHolder holder, boolean failed, Throwable error) {
+	public ModeBuckets findNearestEligibleTier(
+			Lifecycle phase, String eventName, TelemetryHolder holder, boolean failed, Throwable error) {
 		String name = eventName;
 		while (name != null && !name.isEmpty()) {
 			ModeBucketsByPhase byPhase = tiers.get(name);
@@ -130,23 +132,21 @@ public final class HandlerGroup {
 	}
 
 	/* =========================
-	   Types
-	   ========================= */
+	Types
+	========================= */
 
 	/**
-	 * Compiled component-level scope based on {@link EventScope}.
-	 * All configured predicates are ANDed (prefix AND lifecycle AND kind AND error mode).
+	 * Compiled component-level scope based on {@link EventScope}. All configured predicates are ANDed (prefix AND
+	 * lifecycle AND kind AND error mode).
 	 */
 	public static final class Scope {
-		private final String[] prefixes;           // null/empty = any
-		private final EnumSet<Lifecycle> phases;   // null = any
-		private final EnumSet<SpanKind> kinds;     // null = any
+		private final String[] prefixes; // null/empty = any
+		private final EnumSet<Lifecycle> phases; // null = any
+		private final EnumSet<SpanKind> kinds; // null = any
 		private final EventScope.ErrorMode errorMode; // never null
 
-		private Scope(String[] prefixes,
-					  EnumSet<Lifecycle> phases,
-					  EnumSet<SpanKind> kinds,
-					  EventScope.ErrorMode errorMode) {
+		private Scope(
+				String[] prefixes, EnumSet<Lifecycle> phases, EnumSet<SpanKind> kinds, EventScope.ErrorMode errorMode) {
 			this.prefixes = (prefixes == null || prefixes.length == 0) ? null : prefixes;
 			this.phases = (phases == null || phases.isEmpty()) ? null : phases;
 			this.kinds = (kinds == null || kinds.isEmpty()) ? null : kinds;
@@ -157,21 +157,31 @@ public final class HandlerGroup {
 			return new Scope(null, null, null, EventScope.ErrorMode.ANY);
 		}
 
-		public static Scope of(String[] prefixes,
-							   Lifecycle[] lifecycles,
-							   SpanKind[] kinds,
-							   EventScope.ErrorMode errorMode) {
-			EnumSet<Lifecycle> plc = null;
-			if (lifecycles != null && lifecycles.length > 0) {
-				plc = EnumSet.noneOf(Lifecycle.class);
-				for (Lifecycle lc : lifecycles) plc.add(lc);
-			}
-			EnumSet<SpanKind> pk = null;
-			if (kinds != null && kinds.length > 0) {
-				pk = EnumSet.noneOf(SpanKind.class);
-				for (SpanKind k : kinds) pk.add(k == null ? SpanKind.INTERNAL : k);
-			}
+		public static Scope of(
+				String[] prefixes, Lifecycle[] lifecycles, SpanKind[] kinds, EventScope.ErrorMode errorMode) {
+			EnumSet<Lifecycle> plc = getLifecycles(lifecycles);
+			EnumSet<SpanKind> pk = getSpanKinds(kinds);
 			return new Scope(prefixes, plc, pk, errorMode);
+		}
+
+		private static EnumSet<SpanKind> getSpanKinds(SpanKind[] kinds) {
+			EnumSet<SpanKind> pk = EnumSet.noneOf(SpanKind.class);
+
+			if (kinds != null && kinds.length > 0) {
+				Collections.addAll(pk, kinds);
+			}
+
+			return pk;
+		}
+
+		private static EnumSet<Lifecycle> getLifecycles(Lifecycle[] lifecycles) {
+			EnumSet<Lifecycle> plc = EnumSet.noneOf(Lifecycle.class);
+
+			if (lifecycles != null && lifecycles.length > 0) {
+				Collections.addAll(plc, lifecycles);
+			}
+
+			return plc;
 		}
 
 		boolean test(Lifecycle phase, String eventName, TelemetryHolder holder) {
@@ -179,7 +189,10 @@ public final class HandlerGroup {
 			if (prefixes != null && eventName != null) {
 				boolean hit = false;
 				for (String p : prefixes) {
-					if (p != null && !p.isEmpty() && eventName.startsWith(p)) { hit = true; break; }
+					if (p != null && !p.isEmpty() && eventName.startsWith(p)) {
+						hit = true;
+						break;
+					}
 				}
 				if (!hit) return false;
 			}
@@ -214,14 +227,14 @@ public final class HandlerGroup {
 	/** Buckets of handlers by dispatch mode. */
 	public static final class ModeBuckets {
 		public final List<Handler> combined = new ArrayList<>();
-		public final List<Handler> success  = new ArrayList<>();
-		public final List<Handler> failure  = new ArrayList<>();
+		public final List<Handler> success = new ArrayList<>();
+		public final List<Handler> failure = new ArrayList<>();
 
 		void add(DispatchMode mode, Handler h) {
 			switch (mode) {
 				case SUCCESS -> success.add(h);
 				case FAILURE -> failure.add(h);
-				default      -> combined.add(h);
+				default -> combined.add(h);
 			}
 		}
 
@@ -239,9 +252,17 @@ public final class HandlerGroup {
 		}
 
 		// Convenience views used by dispatcher (for current phase)
-		public List<Handler> combined(Lifecycle p) { return forPhase(p).combined; }
-		public List<Handler> success (Lifecycle p) { return forPhase(p).success;  }
-		public List<Handler> failure (Lifecycle p) { return forPhase(p).failure;  }
+		public List<Handler> combined(Lifecycle p) {
+			return forPhase(p).combined;
+		}
+
+		public List<Handler> success(Lifecycle p) {
+			return forPhase(p).success;
+		}
+
+		public List<Handler> failure(Lifecycle p) {
+			return forPhase(p).failure;
+		}
 	}
 
 	/** Taps for @OnEveryEvent: additive, split per phase. */
@@ -258,10 +279,12 @@ public final class HandlerGroup {
 			ModeBuckets mb = by.get(p);
 			return mb == null ? any.combined : mb.combined;
 		}
+
 		public List<Handler> success(Lifecycle p) {
 			ModeBuckets mb = by.get(p);
 			return mb == null ? any.success : mb.success;
 		}
+
 		public List<Handler> failure(Lifecycle p) {
 			ModeBuckets mb = by.get(p);
 			return mb == null ? any.failure : mb.failure;
