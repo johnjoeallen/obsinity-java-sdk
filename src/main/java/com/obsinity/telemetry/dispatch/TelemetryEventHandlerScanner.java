@@ -6,14 +6,12 @@ import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.*;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.core.annotation.MergedAnnotation;
 import org.springframework.core.annotation.MergedAnnotations;
@@ -24,7 +22,7 @@ import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.GlobalFlowFallback;
 import com.obsinity.telemetry.annotations.OnEventLifecycle;
 import com.obsinity.telemetry.annotations.OnEventScope;
-import com.obsinity.telemetry.annotations.OnFlow;
+import com.obsinity.telemetry.annotations.OnFlowStarted;
 import com.obsinity.telemetry.annotations.OnFlowCompleted;
 import com.obsinity.telemetry.annotations.OnFlowFailure;
 import com.obsinity.telemetry.annotations.OnFlowNotMatched;
@@ -116,8 +114,8 @@ public class TelemetryEventHandlerScanner {
 			Map<String, List<String>> dupGuard = new LinkedHashMap<>();
 
 			// ---------- Handlers: OnFlow -> completed ----------
-			for (Method m : methodsAnnotated(userClass, OnFlow.class)) {
-				String name = readAliasedName(m, OnFlow.class);
+			for (Method m : methodsAnnotated(userClass, OnFlowStarted.class)) {
+				String name = readAliasedName(m, OnFlowStarted.class);
 				validateNonBlank(userClass, m, "@OnFlow.name", name);
 
 				registerForAllPhases(group, bean, userClass, m, name, Bucket.COMPLETED, dupGuard);

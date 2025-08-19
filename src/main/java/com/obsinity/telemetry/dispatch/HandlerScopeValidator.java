@@ -1,7 +1,6 @@
 // src/main/java/com/obsinity/telemetry/dispatch/HandlerScopeValidator.java
 package com.obsinity.telemetry.dispatch;
 
-import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -20,7 +19,7 @@ import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.OnEventScope;
 import com.obsinity.telemetry.annotations.OnEventLifecycle;
-import com.obsinity.telemetry.annotations.OnFlow;
+import com.obsinity.telemetry.annotations.OnFlowStarted;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
 import com.obsinity.telemetry.annotations.OnFlowFailure;
 import com.obsinity.telemetry.annotations.OnFlowCompleted;
@@ -71,7 +70,7 @@ public class HandlerScopeValidator implements SmartInitializingSingleton {
 			// Validate method-level annotations
 			for (Method m : userClass.getMethods()) {
 				boolean hasAnyFlow =
-					m.isAnnotationPresent(OnFlow.class)
+					m.isAnnotationPresent(OnFlowStarted.class)
 						|| m.isAnnotationPresent(OnFlowSuccess.class)
 						|| m.isAnnotationPresent(OnFlowFailure.class)
 						|| m.isAnnotationPresent(OnFlowCompleted.class);
@@ -87,8 +86,8 @@ public class HandlerScopeValidator implements SmartInitializingSingleton {
 				}
 
 				// Validate each @OnFlow* method against class-level scope
-				if (m.isAnnotationPresent(OnFlow.class)) {
-					OnFlow a = AnnotationUtils.getAnnotation(m, OnFlow.class);
+				if (m.isAnnotationPresent(OnFlowStarted.class)) {
+					OnFlowStarted a = AnnotationUtils.getAnnotation(m, OnFlowStarted.class);
 					validateFlowAgainstScope(beanName, userClass, m, a.value(), scopePrefixes, scopeLifecycles);
 				}
 				if (m.isAnnotationPresent(OnFlowSuccess.class)) {

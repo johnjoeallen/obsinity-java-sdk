@@ -23,7 +23,6 @@ import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.OnEventLifecycle;
 import com.obsinity.telemetry.annotations.OnEventScope;
-import com.obsinity.telemetry.annotations.OnFlow;
 import com.obsinity.telemetry.annotations.OnFlowCompleted;
 import com.obsinity.telemetry.annotations.OnFlowFailure;
 import com.obsinity.telemetry.annotations.OnFlowNotMatched;

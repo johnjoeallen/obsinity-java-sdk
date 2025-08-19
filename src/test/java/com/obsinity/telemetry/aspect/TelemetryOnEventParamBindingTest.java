@@ -27,7 +27,7 @@ import io.opentelemetry.api.trace.SpanKind;
 import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
-import com.obsinity.telemetry.annotations.OnFlow;
+import com.obsinity.telemetry.annotations.OnFlowStarted;
 import com.obsinity.telemetry.annotations.OnFlowCompleted;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
 import com.obsinity.telemetry.annotations.PullAllContextValues;
@@ -181,7 +181,7 @@ class TelemetryOnEventParamBindingTest {
 		final List<StepCapture> stepFinished = new CopyOnWriteArrayList<>();
 
 		/* ---- Start taps (lonely step only, to keep the test’s assertion) ---- */
-		@OnFlow(name = "lonelyStep")
+		@OnFlowStarted(name = "lonelyStep")
 		public void onLonelyStepStart(TelemetryHolder holder, Lifecycle phase) {
 			if (phase == Lifecycle.FLOW_STARTED) {
 				starts.add(holder);
