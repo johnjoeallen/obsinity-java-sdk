@@ -1,31 +1,31 @@
+// src/main/java/com/obsinity/telemetry/dispatch/HandlerScopeValidator.java
 package com.obsinity.telemetry.dispatch;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.BeanCreationException;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.SmartInitializingSingleton;
+import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.stereotype.Component;
 
-import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.EventScope;
-import com.obsinity.telemetry.annotations.OnEvent;
-import com.obsinity.telemetry.annotations.OnEveryEvent;
-import com.obsinity.telemetry.annotations.OnUnMatchedEvent;
-import com.obsinity.telemetry.annotations.TelemetryEventHandler;
 import com.obsinity.telemetry.model.Lifecycle;
 
-/**
- * Startup validator that enforces safe combinations of @OnEvent, @OnEveryEvent, @OnUnMatchedEvent with
- * optional @EventScope on @TelemetryEventHandler components.
- */
+// NEW annotations (flow-centric)
+import com.obsinity.telemetry.annotations.EventReceiver;
+import com.obsinity.telemetry.annotations.OnEventScope;
+import com.obsinity.telemetry.annotations.OnEventLifecycle;
+import com.obsinity.telemetry.annotations.OnFlow;
+import com.obsinity.telemetry.annotations.OnFlowSuccess;
+import com.obsinity.telemetry.annotations.OnFlowFailure;
+import com.obsinity.telemetry.annotations.OnFlowCompleted;
+import com.obsinity.telemetry.annotations.OnFlowNotMatched;
+
 @Component
 public class HandlerScopeValidator implements SmartInitializingSingleton {
 
@@ -37,141 +37,115 @@ public class HandlerScopeValidator implements SmartInitializingSingleton {
 
 	@Override
 	public void afterSingletonsInstantiated() {
-		Map<String, Object> beans = beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class);
+		Map<String, Object> beans = beanFactory.getBeansWithAnnotation(EventReceiver.class);
 
 		for (Map.Entry<String, Object> e : beans.entrySet()) {
 			String beanName = e.getKey();
 			Class<?> userClass = AopUtils.getTargetClass(e.getValue());
 
-			EventScope scope = userClass.getAnnotation(EventScope.class);
-			Set<String> scopePrefixes = scope == null ? Set.of() : Set.of(scope.prefixes());
-			Set<Lifecycle> scopeLifecycles = scope == null ? Set.of() : Set.of(scope.lifecycles());
-			Set<SpanKind> scopeKinds = scope == null ? Set.of() : Set.of(scope.kinds());
-			EventScope.ErrorMode scopeErrorMode = scope == null ? EventScope.ErrorMode.ANY : scope.errorMode();
+			// Class-level scopes (merged & repeatable) — these return Set, not List
+			Set<OnEventScope> scopes =
+				AnnotatedElementUtils.getMergedRepeatableAnnotations(userClass, OnEventScope.class);
+			Set<OnEventLifecycle> lifecyclesAnn =
+				AnnotatedElementUtils.getMergedRepeatableAnnotations(userClass, OnEventLifecycle.class);
 
-			List<Method> onEventMethods = methodsAnnotated(userClass, OnEvent.class);
-			List<Method> onUnmatchedMethods = methodsAnnotated(userClass, OnUnMatchedEvent.class);
+			// Flatten class-level scope config
+			Set<String> scopePrefixes = scopes.stream()
+				.map(a -> firstNonBlank(a.value()))
+				.filter(s -> !s.isBlank())
+				.collect(Collectors.toSet());
 
-			// Mixed mode requires scope if any COMPONENT unmatched present
-			boolean hasComponentUnmatched = onUnmatchedMethods.stream()
-					.map(m -> m.getAnnotation(OnUnMatchedEvent.class))
-					.anyMatch(a -> a.scope() == OnUnMatchedEvent.Scope.COMPONENT);
+			Set<Lifecycle> scopeLifecycles = lifecyclesAnn.stream()
+				.flatMap(a -> {
+					Object v = AnnotationUtils.getValue(a, "value");
+					if (v instanceof Lifecycle lc) {
+						return java.util.stream.Stream.of(lc);
+					} else if (v instanceof Lifecycle[] arr) {
+						return java.util.Arrays.stream(arr);
+					} else {
+						return java.util.stream.Stream.<Lifecycle>empty();
+					}
+				})
+				.collect(Collectors.toSet());
 
-			if (hasComponentUnmatched && scope == null) {
-				throw new BeanCreationException(
-						beanName,
-						err(userClass)
-								+ " mixes @OnUnMatchedEvent(scope=COMPONENT) and @OnEvent but has no @EventScope. "
-								+ "Add @EventScope(prefixes=...) to bound the component’s domain.");
-			}
-
-			// Validate each @OnEvent intersects class scope
-			for (Method m : onEventMethods) {
-				OnEvent a = m.getAnnotation(OnEvent.class);
-				validateOnEventAgainstScope(
-						beanName, userClass, m, a, scopePrefixes, scopeLifecycles, scopeKinds, scopeErrorMode);
-			}
-
-			// Method-level misuse: cannot annotate with both
+			// Validate method-level annotations
 			for (Method m : userClass.getMethods()) {
-				if (m.isAnnotationPresent(OnEvent.class) && m.isAnnotationPresent(OnUnMatchedEvent.class)) {
-					throw new BeanCreationException(
-							beanName, err(userClass, m) + "cannot have both @OnEvent and @OnUnMatchedEvent.");
-				}
-			}
+				boolean hasAnyFlow =
+					m.isAnnotationPresent(OnFlow.class)
+						|| m.isAnnotationPresent(OnFlowSuccess.class)
+						|| m.isAnnotationPresent(OnFlowFailure.class)
+						|| m.isAnnotationPresent(OnFlowCompleted.class);
 
-			// Warn if GLOBAL unmatched is paired with @EventScope (ignored)
-			boolean hasGlobalUnmatched = onUnmatchedMethods.stream()
-					.map(m -> m.getAnnotation(OnUnMatchedEvent.class))
-					.anyMatch(a -> a.scope() == OnUnMatchedEvent.Scope.GLOBAL);
-			if (hasGlobalUnmatched && scope != null) {
-				// optional: log a warning
-			}
+				boolean hasNotMatched = m.isAnnotationPresent(OnFlowNotMatched.class);
 
-			// Validate @OnEveryEvent against scope (must intersect)
-			for (Method m : methodsAnnotated(userClass, OnEveryEvent.class)) {
-				OnEveryEvent ann = m.getAnnotation(OnEveryEvent.class);
-				if (!scopePrefixes.isEmpty() && !overlapsByPrefix(scopePrefixes, "")) {
-					// scope restricts by prefix, so tap sees only those anyway
-					// no explicit name filter on OnEveryEvent, so fine
-				}
-				if (!scopeLifecycles.isEmpty()
-						&& ann.lifecycle().length > 0
-						&& !intersects(scopeLifecycles, Set.of(ann.lifecycle()))) {
+				// Misuse: cannot mix @OnFlow* with @OnFlowNotMatched on the same method
+				if (hasAnyFlow && hasNotMatched) {
 					throw new BeanCreationException(
-							beanName,
-							err(userClass, m) + "@OnEveryEvent lifecycle filters do not intersect component scope.");
+						beanName,
+						err(userClass, m)
+							+ "cannot have both @OnFlow* and @OnFlowNotMatched on the same method.");
 				}
-				if (!scopeKinds.isEmpty() && ann.kinds().length > 0 && !intersects(scopeKinds, Set.of(ann.kinds()))) {
-					throw new BeanCreationException(
-							beanName,
-							err(userClass, m) + "@OnEveryEvent kind filters do not intersect component scope.");
+
+				// Validate each @OnFlow* method against class-level scope
+				if (m.isAnnotationPresent(OnFlow.class)) {
+					OnFlow a = AnnotationUtils.getAnnotation(m, OnFlow.class);
+					validateFlowAgainstScope(beanName, userClass, m, a.value(), scopePrefixes, scopeLifecycles);
 				}
-				// errorMode: taps don’t have errorMode; always ANY — so always compatible
+				if (m.isAnnotationPresent(OnFlowSuccess.class)) {
+					OnFlowSuccess a = AnnotationUtils.getAnnotation(m, OnFlowSuccess.class);
+					validateFlowAgainstScope(beanName, userClass, m, a.value(), scopePrefixes, scopeLifecycles);
+				}
+				if (m.isAnnotationPresent(OnFlowFailure.class)) {
+					OnFlowFailure a = AnnotationUtils.getAnnotation(m, OnFlowFailure.class);
+					validateFlowAgainstScope(beanName, userClass, m, a.value(), scopePrefixes, scopeLifecycles);
+				}
+				if (m.isAnnotationPresent(OnFlowCompleted.class)) {
+					OnFlowCompleted a = AnnotationUtils.getAnnotation(m, OnFlowCompleted.class);
+					validateFlowAgainstScope(beanName, userClass, m, a.value(), scopePrefixes, scopeLifecycles);
+				}
+
+				// @OnFlowNotMatched: method-only, no name and no lifecycle member to validate here
+				if (hasNotMatched) {
+					// Nothing to validate for prefixes (no name) or lifecycles (annotation has no lifecycle member).
+					// Class-level @OnEventScope / @OnEventLifecycle already constrain what this component will see.
+				}
 			}
 		}
 	}
 
-	private static List<Method> methodsAnnotated(Class<?> c, Class<? extends Annotation> ann) {
-		return Arrays.stream(c.getMethods())
-				.filter(m -> m.isAnnotationPresent(ann))
-				.toList();
-	}
+	private static void validateFlowAgainstScope(
+		String beanName,
+		Class<?> userClass,
+		Method m,
+		String eventName,
+		Set<String> scopePrefixes,
+		Set<Lifecycle> scopeLifecycles) {
 
-	private static void validateOnEventAgainstScope(
-			String beanName,
-			Class<?> userClass,
-			Method m,
-			OnEvent a,
-			Set<String> scopePrefixes,
-			Set<Lifecycle> scopeLifecycles,
-			Set<SpanKind> scopeKinds,
-			EventScope.ErrorMode scopeErrorMode) {
-		String eventName = a.name();
-
-		// Prefix intersection
 		if (!scopePrefixes.isEmpty()) {
-			boolean ok = scopePrefixes.stream().anyMatch(p -> eventName.startsWith(p));
+			boolean ok = scopePrefixes.stream().anyMatch(p -> eventName != null && eventName.startsWith(p));
 			if (!ok) {
 				throw new BeanCreationException(
-						beanName,
-						err(userClass, m) + "event name outside component @EventScope prefixes. " + "Scope="
-								+ scopePrefixes + ", method name='" + eventName + "'.");
+					beanName,
+					err(userClass, m)
+						+ "flow name outside component @OnEventScope prefixes. "
+						+ "Scope=" + scopePrefixes + ", method name='" + eventName + "'.");
 			}
 		}
 
-		// Lifecycle intersection
-		if (!scopeLifecycles.isEmpty()
-				&& a.lifecycle().length > 0
-				&& !intersects(scopeLifecycles, Set.of(a.lifecycle()))) {
-			throw new BeanCreationException(
-					beanName, err(userClass, m) + "lifecycles do not intersect component @EventScope.");
+		// If class declares lifecycles, that’s the contract; method-level flows don’t change it.
+		if (!scopeLifecycles.isEmpty()) {
+			// nothing else to check for now
 		}
-
-		// Kind intersection
-		if (!scopeKinds.isEmpty() && a.kinds().length > 0 && !intersects(scopeKinds, Set.of(a.kinds()))) {
-			throw new BeanCreationException(
-					beanName, err(userClass, m) + "span kinds do not intersect component @EventScope.");
-		}
-
-		// Error mode intersection
-		if (scopeErrorMode != EventScope.ErrorMode.ANY) {
-			// OnEvent doesn’t expose error tri-state; assume always compatible for now
-		}
-	}
-
-	private static boolean overlapsByPrefix(Set<String> prefixes, String candidate) {
-		if (candidate.isEmpty()) return true;
-		for (String p : prefixes) {
-			if (candidate.startsWith(p) || p.startsWith(candidate)) return true;
-		}
-		return false;
 	}
 
 	private static <E> boolean intersects(Set<E> scope, Set<E> method) {
 		if (scope.isEmpty() || method.isEmpty()) return true;
 		for (E e : method) if (scope.contains(e)) return true;
 		return false;
+	}
+
+	private static String firstNonBlank(String s) {
+		return (s == null) ? "" : s.trim();
 	}
 
 	private static String err(Class<?> c) {

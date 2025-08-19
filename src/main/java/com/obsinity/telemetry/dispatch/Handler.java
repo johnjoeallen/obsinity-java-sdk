@@ -1,3 +1,4 @@
+// src/main/java/com/obsinity/telemetry/dispatch/Handler.java
 package com.obsinity.telemetry.dispatch;
 
 import java.lang.reflect.Method;
@@ -8,26 +9,24 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.DispatchMode;
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /** Immutable, precompiled handler descriptor discovered at bootstrap. */
 public record Handler(
-		Object bean,
-		Method method,
-		String exactName, // dot-chop key (validated by scanner; no wildcards)
-		BitSet lifecycleMask,
-		BitSet kindMask,
-		DispatchMode mode, // COMBINED / SUCCESS / FAILURE
-		List<Class<? extends Throwable>> throwableTypes,
-		boolean includeSubclasses,
-		Pattern messagePattern, // optional regex on Throwable.getMessage()
-		Class<?> causeTypeOrNull, // optional Throwable.getCause() type
-		List<ParamBinder> binders,
-		Set<String> requiredAttrs,
-		String id // e.g. beanClass#method
-		) {
+	Object bean,
+	Method method,
+	String exactName,                 // dot-chop key (validated by scanner; no wildcards)
+	BitSet lifecycleMask,             // null = any
+	BitSet kindMask,                  // null = any
+	List<Class<? extends Throwable>> throwableTypes,
+	boolean includeSubclasses,
+	Pattern messagePattern,           // optional regex on Throwable.getMessage()
+	Class<?> causeTypeOrNull,         // optional Throwable.getCause() type
+	List<ParamBinder> binders,
+	Set<String> requiredAttrs,
+	String id                         // e.g. beanClass#method
+) {
 
 	/** Lifecycle acceptance (null mask = any). */
 	public boolean lifecycleAccepts(Lifecycle lc) {
@@ -37,30 +36,13 @@ public record Handler(
 
 	/** SpanKind acceptance (null mask = any). */
 	public boolean kindAccepts(SpanKind kind) {
-		if (kind == null) return (kindMask == null) || (kindMask.get(SpanKind.INTERNAL.ordinal()));
+		if (kind == null) return (kindMask == null) || kindMask.get(SpanKind.INTERNAL.ordinal());
 		return (kindMask == null) || kindMask.get(kind.ordinal());
-	}
-
-	public boolean isCombinedMode() {
-		return mode == DispatchMode.COMBINED;
-	}
-
-	public boolean isSuccessMode() {
-		return mode == DispatchMode.SUCCESS;
-	}
-
-	public boolean isFailureMode() {
-		return mode == DispatchMode.FAILURE;
 	}
 
 	/** Convenience accessor for the dispatcher’s dot-chop map key. */
 	public String nameKey() {
 		return exactName;
-	}
-
-	/** Back-compat shim so callers can use getMode() instead of record accessor mode(). */
-	public DispatchMode getMode() {
-		return mode;
 	}
 
 	/** Human-friendly id for logs. */
@@ -72,12 +54,11 @@ public record Handler(
 		}
 	}
 
-	/** Fast acceptance test combining mode, lifecycle/kind masks, required attrs, and failure filters. */
+	/**
+	 * Fast acceptance test combining lifecycle/kind masks, required attrs, and (on failure only) throwable filters.
+	 * Note: "mode" routing (success/failure/completed) is now decided by the dispatcher’s bucket selection.
+	 */
 	public boolean accepts(Lifecycle phase, TelemetryHolder h, boolean failed, Throwable error) {
-		// 0) Mode vs error presence
-		if (isSuccessMode() && failed) return false;
-		if (isFailureMode() && !failed) return false;
-
 		// 1) Lifecycle / Kind
 		if (!lifecycleAccepts(phase)) return false;
 		SpanKind k = (h == null || h.kind() == null) ? SpanKind.INTERNAL : h.kind();
@@ -85,13 +66,11 @@ public record Handler(
 
 		// 2) Required attributes
 		if (requiredAttrs != null && !requiredAttrs.isEmpty()) {
-			Map<String, ?> attrs = (h == null || h.attributes() == null)
-					? null
-					: h.attributes().asMap();
+			Map<String, ?> attrs = (h == null || h.attributes() == null) ? null : h.attributes().asMap();
 			if (attrs == null || !attrs.keySet().containsAll(requiredAttrs)) return false;
 		}
 
-		// 3) Throwable filters (only on failure path)
+		// 3) Throwable filters apply ONLY on failure path (dispatcher will only consider this handler in failure buckets)
 		if (!failed) return true;
 
 		// 3a) Type checks
@@ -100,8 +79,8 @@ public record Handler(
 			for (Class<? extends Throwable> tt : throwableTypes) {
 				if (tt == null) continue;
 				if (includeSubclasses
-						? (tt.isInstance(error))
-						: (error != null && error.getClass().equals(tt))) {
+					? (tt.isInstance(error))
+					: (error != null && error.getClass().equals(tt))) {
 					ok = true;
 					break;
 				}
@@ -141,7 +120,6 @@ public record Handler(
 		}
 		// Any remaining parameters beyond known binders default to null.
 
-		// One-place robust access fix (covers non-public declaring classes & JPMS)
 		if (!method.canAccess(bean)) {
 			method.setAccessible(true);
 		}
