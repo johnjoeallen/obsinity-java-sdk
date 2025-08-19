@@ -25,17 +25,24 @@
 | `@PushAttribute`    | Parameter | Saves the parameter value into **attributes** under the key. |
 | `@PushContextValue` | Parameter | Saves the parameter value into **context** under the key.    |
 
+**Notes**
+
+- `@PushAttribute` supports aliasing: use `name="..."` **or** `value="..."`.
+- `@PushAttribute` includes `omitIfNull` (default **true**). Set to `false` to save explicit `null` values.
+- `@PushContextValue` also supports aliasing (`name`/`value`).
+
+
 ---
 
 ### Pull Annotations (`@OnEvent` handlers READ values)
 
-> **Note:** Pull annotations **require `name = "..."`**. The `value` alias is not supported for pulls.
+> **Note:** Pull annotations support Spring-style aliasing: use **`name="..."`** *or* **`value="..."`**.
 
 | Annotation                 | Target    | Purpose                                                                 |
 | -------------------------- | --------- | ----------------------------------------------------------------------- |
-| `@PullAttribute(name=)`    | Parameter | Injects a single **attribute** by key.                                  |
+| `@PullAttribute(name=\|value=)`    | Parameter | Injects a single **attribute** by key.                                  |
 | `@PullAllAttributes`       | Parameter | Injects an **unmodifiable Map** of **all attributes** on the event.     |
-| `@PullContextValue(name=)` | Parameter | Injects a single **context** value by key.                              |
+| `@PullContextValue(name=\|value=)` | Parameter | Injects a single **context** value by key.                              |
 | `@PullAllContextValues`    | Parameter | Injects an **unmodifiable Map** of **all context** values on the event. |
 
 ---
@@ -48,7 +55,7 @@ Starts a **root telemetry flow**. All `@Step` calls made inside it become child 
 @Kind(SpanKind.SERVER)
 public class OrderService {
   @Flow(name = "checkout.process")
-  public Receipt checkout(@PushAttribute("order.id") String id) { /* ... */ }
+  public Receipt checkout(@PushAttribute(value = "order.id") String id) { /* ... */ }
 }
 ```
 
@@ -61,7 +68,7 @@ If no flow is active, the step is **auto-promoted** to a flow.
 
 ```java
 @Step(name = "checkout.validate")
-public void validate(@PushAttribute("order.id") String id) { /* ... */ }
+public void validate(@PushAttribute(value = "order.id") String id) { /* ... */ }
 ```
 
 ---
@@ -169,13 +176,13 @@ public class OrderService {
 
   @Flow(name = TelemetryNames.EVENT_CHECKOUT_PROCESS)
   public Receipt checkout(
-      @PushAttribute("order.id") String orderId,
+      @PushAttribute(value = "order.id") String orderId,
       @PushAttribute("order.total") BigDecimal total,
       @PushContextValue("correlationId") String correlationId) {
 
     validate(orderId, total);
     charge(orderId, total);
-    persist(orderId);
+    save(orderId);
     return new Receipt();
   }
 }
@@ -187,12 +194,12 @@ public class OrderService {
 public class OrderService {
 
   @Step(name = TelemetryNames.STEP_CHECKOUT_VALIDATE)
-  public void validate(@PushAttribute("order.id") String orderId,
+  public void validate(@PushAttribute(value = "order.id") String orderId,
                        @PushAttribute("order.total") BigDecimal total) { }
 
   @Step(name = TelemetryNames.STEP_CHECKOUT_CHARGE)
   @Kind(SpanKind.CLIENT)
-  public void charge(@PushAttribute("order.id") String orderId,
+  public void charge(@PushAttribute(value = "order.id") String orderId,
                      @PushAttribute("payment.method") String method,
                      @PushContextValue("retry") boolean retry) { }
 }
@@ -338,7 +345,7 @@ ERROR path: best ERROR → ALWAYS
   ↓
 Parameter binding (pull annotations, Throwable injection)
   ↓
-Attributes persisted; context discarded at scope end
+Attributes saved; context discarded at scope end
 ```
 
 ---

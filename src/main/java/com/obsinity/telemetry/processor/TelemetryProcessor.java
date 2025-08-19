@@ -370,9 +370,13 @@ public class TelemetryProcessor {
 		dispatchBus.rootFlowFinished(batch);
 	}
 
-	protected void onInvocationStarted(final TelemetryHolder current, final FlowOptions options) {}
+	protected void onInvocationStarted(final TelemetryHolder current, final FlowOptions options) {
+		// Reserved for future use
+	}
 
-	protected void onInvocationFinishing(final TelemetryHolder current, final FlowOptions options) {}
+	protected void onInvocationFinishing(final TelemetryHolder current, final FlowOptions options) {
+		// Reserved for future use
+	}
 
 	protected void onSuccess(final TelemetryHolder current, final Object result, final FlowOptions options) {
 		current.setThrowable(null).setStatus(new OStatus(StatusCode.OK, null));
