@@ -1,5 +1,7 @@
 # Obsinity Telemetry Developer Guide
 
+> Uses the **new phrasing** throughout: **send/record** (not emit) and **save in attributes/context** (not persist). Modes are **SUCCESS** and **FAILURE** only; use **`@OnOutcome`** for a once‑per‑flow hook. We now introduce **`@OnFlowCompleted`** to handle **any flow** without blank selectors. **No SQL** and **no module/build** content. Examples include **Javadoc‑style comments**.
+
 ---
 
 ## Annotation Reference
@@ -19,16 +21,16 @@
 
 ### Flow receivers (flow‑centric handlers)
 
-| Annotation            | Target | Purpose                                                                              |
-| --------------------- | ------ | ------------------------------------------------------------------------------------ |
-| `@EventReceiver`      | Class  | Marks a bean containing flow/step event handlers.                                    |
-| `@OnFlowStarted`      | Method | Handle when a flow **starts** (exact name or prefix; alias `value`/`name`).          |
-| `@OnFlowCompleted`    | Method | Handle when a matched flow **finishes** (success or failure).                        |
-| `@OnFlowSuccess`      | Method | Handle only when a matched flow **succeeds**.                                        |
-| `@OnFlowFailure`      | Method | Handle only when a matched flow **fails**.                                           |
-| `@OnEveryFlow`        | Method | **Handle any flow** that passes class‑level scope/lifecycle (no name/prefix needed). |
-| `@OnFlowNotMatched`   | Method | Component‑scoped fallback when **no** `@OnFlow*` in this receiver matched.           |
-| `@GlobalFlowFallback` | Class  | Global fallback receiver when **no receiver in the app** matched a flow.             |
+| Annotation            | Target | Purpose                                                                                                                                                                                                                                                       |
+| --------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@EventReceiver`      | Class  | Marks a bean containing flow/step event handlers.                                                                                                                                                                                                             |
+| `@OnFlowStarted`      | Method | Handle when a flow **starts** (exact name or prefix; alias `value`/`name`).                                                                                                                                                                                   |
+| `@OnFlowCompleted`    | Method | Handles flow completion. **Name/prefix optional**: if omitted, matches **any flow** that passes class-level scope/lifecycle. **Signature:** parameter must be `TelemetryHolder` or `List<TelemetryHolder>`; the list form fires only at `ROOT_FLOW_FINISHED`. |
+| `@OnFlowSuccess`      | Method | Handle only when a matched flow **succeeds**.                                                                                                                                                                                                                 |
+| `@OnFlowFailure`      | Method | Handle only when a matched flow **fails**.                                                                                                                                                                                                                    |
+| `@OnFlowCompleted`    | Method | **Handle any flow** that passes class‑level scope/lifecycle (no name/prefix). **Signature constraint:** method parameter **must be** `TelemetryHolder` *or* `List<TelemetryHolder>`. If `List<>` is used, the method **fires only at `ROOT_FLOW_FINISHED`**.  |
+| `@OnFlowNotMatched`   | Method | Component‑scoped fallback when **no** `@OnFlowCompleted*` in this receiver matched.                                                                                                                                                                           |
+| `@GlobalFlowFallback` | Class  | Global fallback receiver when **no receiver in the app** matched a flow.                                                                                                                                                                                      |
 
 ### Outcome filtering
 
@@ -61,7 +63,7 @@
 **Name matching (dot‑chop):** handlers declared with a **prefix** match deeper names by chopping from the right:
 `a.b.c` → `a.b` → `a` → *(stop)*.
 
-**No blank selector pattern.** When the chain ends, treat as **not matched** and prefer **`@OnFlowNotMatched`** for fallbacks. For match‑all behavior on flows, use **`@OnEveryFlow`** (not an empty `name`).
+**No blank selector pattern.** When the chain ends, treat as **not matched** and prefer **`@OnFlowNotMatched`** for fallbacks. For match‑all flows, use **`@OnFlowCompleted` with no name/prefix** (do not pass empty strings).
 
 **Scope filters (`@OnEventScope`):**
 
@@ -79,6 +81,7 @@
 
 * Attributes: `@PullAttribute("user.id") String userId`, `@AllAttrs Map<String,Object> attrs`
 * Context: `@PullContextValue("session") Session s`, `@AllContext Map<String,Object> ctx`
+* `@OnFlowCompleted` parameter: **either** `TelemetryHolder` (fires for each matched flow signal) **or** `List<TelemetryHolder>` (fires only at `ROOT_FLOW_FINISHED`).
 * Kind/lifecycle aren’t parameters; set with `@Kind` (method/class), and `@OnEventLifecycle` on the **class**.
 * Producer push (from application code): `@PushAttribute("order.id") String id`, `@PushContextValue("tenant") String t`
 
@@ -87,10 +90,11 @@
 ## Quick Rules to Avoid Startup Failures (updated)
 
 1. **Declare outcomes explicitly** on handlers that care about result: use `@OnOutcome`, or the shorthands `@OnFlowSuccess` / `@OnFlowFailure` / `@OnFlowCompleted`.
-2. **Do not rely on a blank selector**. Use **`@OnEveryFlow`** for match‑all flows, or prefixes for groups; when dot‑chop ends with no match, `@OnFlowNotMatched` acts as the fallback.
-3. **Do not duplicate** handlers with the **same** (lifecycle visibility via class + name/prefix or `@OnEveryFlow` + outcome set + method signature).
-4. Use `@RequiredAttributes` / `@RequiredEventContext` for gating — missing keys prevent invocation.
-5. When scoping at **class level** via `@OnEventScope`, remember method‑level scopes **refine** (intersect) the class scope.
+2. **Do not rely on a blank selector**. Use **`@OnFlowCompleted`** for match‑all flows, or prefixes for groups; when dot‑chop ends with no match, `@OnFlowNotMatched` acts as the fallback.
+3. **Avoid duplicates**: don’t declare two handlers with the same visibility (class lifecycle/scope) + selector (name/prefix or `@OnFlowCompleted`) + outcome set + method signature.
+4. **`@OnFlowCompleted` signature constraint**: the method parameter **must** be `TelemetryHolder` or `List<TelemetryHolder>`; the list variant **only** fires at `ROOT_FLOW_FINISHED`.
+5. Use `@RequiredAttributes` / `@RequiredEventContext` for gating — missing keys prevent invocation.
+6. When scoping at **class level** via `@OnEventScope`, method‑level scopes **refine** (intersect) the class scope.
 
 ---
 
@@ -146,7 +150,7 @@ Default is `INTERNAL`.
 
 ### Step 4 — Decide how you’ll handle outcomes (and match‑all flows)
 
-Use separate handlers for success and failure, a single `@OnOutcome` hook, or the new **`@OnEveryFlow`** for match‑all.
+Use separate handlers for success and failure, a single `@OnOutcome` hook, or the new **`@OnFlowCompleted`** for match‑all.
 
 ```java
 /** Receiver for order outcomes using dedicated success/failure hooks. */
@@ -169,17 +173,18 @@ class OrderOutcomeTap {
   void tap(@AllAttrs Map<String,Object> attrs, Outcome outcome) { /* idempotent sink */ }
 }
 
-/** Match‑all (within scope) using @OnEveryFlow instead of blank selectors. */
+/** Match‑all (within scope) using @OnFlowCompleted instead of blank selectors. */
 @EventReceiver
 @OnEventLifecycle(ROOT_FLOW_FINISHED) // only finished flows
 class AuditAllFlows {
-  /** Runs for every finished flow visible to this receiver; outcome is optional parameter. */
-  @OnEveryFlow
-  void audit(String flowName, Outcome outcome, @AllAttrs Map<String,Object> attrs) { /* audit */ }
+  /** Runs for every finished flow visible to this receiver; receives the TelemetryHolder only. */
+  @OnFlowCompleted
+  void audit(TelemetryHolder flow) { /* audit */ }
+}
 }
 ```
 
-> **No blank selector**: never use empty string ("") to mean "match all". Use **`@OnEveryFlow`** or prefixes.
+> **No blank selector**: never use empty string ("") to mean "match all". Use **`@OnFlowCompleted`** or prefixes.
 
 ### Step 5 — Scope and lifecycle at class level
 
@@ -275,17 +280,36 @@ public class CheckoutReceiver {
 }
 ```
 
-### 3) Match‑all using @OnEveryFlow with lifecycle filters
+### 3) Match‑all using @OnFlowCompleted with lifecycle filters
 
+````java
+/** Audits every finished flow across the application. */
+@EventReceiver
+@OnEventLifecycle(ROOT_FLOW_FINISHED)
+public class GlobalAudit {
+  /** Single-flow variant: invoked per finished flow; receives the flow holder. */
+  @OnFlowCompleted
+  public void auditAll(TelemetryHolder flow) { /* audit */ }
+}
+
+/**
+ * Summarizes a completed root flow using the list variant. Because the parameter is List<TelemetryHolder>,
+ * this method is invoked **only** at ROOT_FLOW_FINISHED and receives the root flow and (optionally) its steps.
+ */
+@EventReceiver
+public class GlobalAuditSummaries {
+  @OnFlowCompleted
+  public void summarize(List<TelemetryHolder> flowAndSteps) { /* summary */ }
+}
 ```java
 /** Audits every finished flow across the application. */
 @EventReceiver
 @OnEventLifecycle(ROOT_FLOW_FINISHED)
 public class GlobalAudit {
-  @OnEveryFlow
+  @OnFlowCompleted
   public void auditAll(String flowName, Outcome outcome, @AllAttrs Map<String,Object> attrs) { /* audit */ }
 }
-```
+````
 
 ### 4) Preconditions
 
@@ -344,7 +368,7 @@ class PaymentService {
 ## Handler Selection & Routing
 
 * **Dot‑chop prefix matching**: `a.b.c` → try `a.b.c`, then `a.b`, then `a`.
-* **No blank selector**: when the chop ends empty, treat as *not matched* → `@OnFlowNotMatched`; for match‑all flows use **`@OnEveryFlow`**.
+* **No blank selector**: when the chop ends empty, treat as *not matched* → `@OnFlowNotMatched`; for match‑all flows use **`@OnFlowCompleted`**.
 * **No wildcard mixing**: prefer explicit prefixes + outcomes.
 * **Validation**: the scope/handler validator rejects invalid intersections and mixed unmatched strategies.
 
@@ -362,7 +386,7 @@ class PaymentService {
 
 * Prefer **separate** SUCCESS/FAILURE handlers.
 * Use **`@OnOutcome`** for a single, once‑per‑flow hook that applies to both outcomes (idempotent sinks).
-* Use **`@OnEveryFlow`** when you need a **match‑all flow** handler without specifying names/prefixes.
+* Use **`@OnFlowCompleted`** when you need a **match‑all flow** handler without specifying names/prefixes.
 * A global fallback receiver records a diagnostic when **no** handler ran.
 
 ---
@@ -387,7 +411,7 @@ class PaymentService {
 ## Spring Integration
 
 * Interceptors around `@Flow`/`@Step` to handle start/finish and attribute saving.
-* Scanning of `@EventReceiver`; registration of `@OnFlow*`, `@OnEveryFlow`, and `@OnOutcome` methods.
+* Scanning of `@EventReceiver`; registration of `@OnFlowCompleted*`, `@OnFlowCompleted`, and `@OnOutcome` methods.
 * A validator runner ensures scopes/handlers are consistent after scanning.
 * **Tip**: If a `SmartInitializingSingleton` validator isn’t firing, ensure it’s not vetoed by conditions and that the runner bean is created.
 
@@ -426,7 +450,7 @@ class PaymentService {
 * **Dot‑chop** = right‑to‑left name reduction to find a handler when using prefixes.
 * **Receiver scopes** (`@OnEventScope` at class level) reduce the candidate space; method scopes further reduce it.
 * **Outcome** = `SUCCESS`/`FAILURE`; use `@OnOutcome` or flow shorthands for outcome‑specific handling.
-* **Match‑all flows** = use `@OnEveryFlow` (not blank selectors).
+* **Match‑all flows** = use `@OnFlowCompleted` (not blank selectors).
 
 ---
 
@@ -434,4 +458,4 @@ class PaymentService {
 
 * **Handler never fires** → Check lifecycle visibility (class), outcome filters, and scopes; unmatched flows go to `@OnFlowNotMatched`.
 * **Parameter is null** → Verify key names for `@PullAttribute`/`@PullContextValue`; use the *all‑map* binders to inspect inputs.
-* **Multiple matches** → Remove duplicates (same lifecycle visibility + selector/`@OnEveryFlow` + outcome set + signature). Keep one or differentiate parameters.
+* **Multiple matches** → Remove duplicates (same lifecycle visibility + selector/`@OnFlowCompleted` + outcome set + signature). Keep one or differentiate parameters.
