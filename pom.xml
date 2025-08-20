@@ -15,7 +15,7 @@
     <artifactId>obsinity-java-sdk</artifactId>
     <name>obsinity-java-sdk</name>
     <packaging>jar</packaging>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.0.2-SNAPSHOT</version>
 
     <properties>
         <java.version>17</java.version>

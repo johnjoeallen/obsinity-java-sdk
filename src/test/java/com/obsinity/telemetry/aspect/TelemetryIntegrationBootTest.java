@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 
@@ -24,16 +23,20 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
 import io.opentelemetry.api.trace.SpanKind;
+
 import com.obsinity.telemetry.annotations.BindEventThrowable;
-import com.obsinity.telemetry.annotations.DispatchMode;
+import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.Flow;
+import com.obsinity.telemetry.annotations.GlobalFlowFallback;
 import com.obsinity.telemetry.annotations.Kind;
-import com.obsinity.telemetry.annotations.OnEvent;
-import com.obsinity.telemetry.annotations.OnUnMatchedEvent;
+import com.obsinity.telemetry.annotations.OnFlowCompleted;
+import com.obsinity.telemetry.annotations.OnFlowFailure;
+import com.obsinity.telemetry.annotations.OnFlowNotMatched;
+import com.obsinity.telemetry.annotations.OnFlowSuccess;
 import com.obsinity.telemetry.annotations.PullAttribute;
 import com.obsinity.telemetry.annotations.PushAttribute;
 import com.obsinity.telemetry.annotations.Step;
-import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+
 import com.obsinity.telemetry.dispatch.HandlerGroup;
 import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
 import com.obsinity.telemetry.model.Lifecycle;
@@ -48,9 +51,10 @@ import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 
 @SpringBootTest(
-		classes = TelemetryIntegrationBootTest.TestApp.class,
-		webEnvironment = SpringBootTest.WebEnvironment.NONE,
-		properties = {"spring.main.web-application-type=none"})
+	classes = TelemetryIntegrationBootTest.TestApp.class,
+	webEnvironment = SpringBootTest.WebEnvironment.NONE,
+	properties = {"spring.main.web-application-type=none"}
+)
 class TelemetryIntegrationBootTest {
 
 	private static final Logger log = LoggerFactory.getLogger(TelemetryIntegrationBootTest.class);
@@ -61,62 +65,30 @@ class TelemetryIntegrationBootTest {
 	@Configuration
 	@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
 	static class TestApp {
-		@Bean
-		com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
-			return new com.fasterxml.jackson.databind.ObjectMapper();
-		}
-
-		@Bean
-		TelemetryContext telemetryContext(TelemetryProcessorSupport support) {
-			return new TelemetryContext(support);
-		}
-
-		@Bean
-		RecordingReceiver recordingReceiver() {
-			return new RecordingReceiver();
-		}
-
-		@Bean
-		AttributeParamExtractor attributeParamExtractor() {
-			return new AttributeParamExtractor();
-		}
-
-		@Bean
-		TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor extractor) {
-			return new TelemetryAttributeBinder(extractor);
-		}
-
-		@Bean
-		TelemetryProcessorSupport telemetryProcessorSupport() {
-			return new TelemetryProcessorSupport();
-		}
+		@Bean com.fasterxml.jackson.databind.ObjectMapper objectMapper() { return new com.fasterxml.jackson.databind.ObjectMapper(); }
+		@Bean TelemetryContext telemetryContext(TelemetryProcessorSupport support) { return new TelemetryContext(support); }
+		@Bean AttributeParamExtractor attributeParamExtractor() { return new AttributeParamExtractor(); }
+		@Bean TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor extractor) { return new TelemetryAttributeBinder(extractor); }
+		@Bean TelemetryProcessorSupport telemetryProcessorSupport() { return new TelemetryProcessorSupport(); }
 
 		@Bean
 		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory, TelemetryProcessorSupport support) {
 			return new TelemetryEventHandlerScanner(beanFactory, support).handlerGroups();
 		}
 
-		/** Build the dispatch bus that routes to handlers. */
-		@Bean
-		TelemetryDispatchBus telemetryDispatchBus(List<HandlerGroup> groups) {
-			return new TelemetryDispatchBus(groups);
-		}
+		@Bean TelemetryDispatchBus telemetryDispatchBus(List<HandlerGroup> groups) { return new TelemetryDispatchBus(groups); }
 
 		@Bean
 		TelemetryProcessor telemetryProcessor(
-				TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus dispatchBus) {
+			TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus dispatchBus) {
 			return new TelemetryProcessor(binder, support, dispatchBus) {
 				@Override
 				protected OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
-					// Base attributes for the flow
 					Map<String, Object> m = new LinkedHashMap<>();
 					m.put("test.flow", opts.name());
 					m.put("declaring.class", pjp.getSignature().getDeclaringTypeName());
 					m.put("declaring.method", pjp.getSignature().getName());
-					// store an OBJECT, not a String
 					m.put("custom.tag", new CustomTag("integration"));
-
-					// Create OAttributes, then merge @Attribute-annotated parameters from the join point
 					OAttributes attrs = new OAttributes(m);
 					binder.bind(attrs, pjp);
 					return attrs;
@@ -124,93 +96,57 @@ class TelemetryIntegrationBootTest {
 			};
 		}
 
-		@Bean
-		TelemetryAspect telemetryAspect(TelemetryProcessor p) {
-			return new TelemetryAspect(p);
-		}
-
-		@Bean
-		TelemetryIntegrationBootTestService telemetryIntegrationBootTestService(TelemetryContext telemetry) {
-			return new TelemetryIntegrationBootTestService(telemetry);
-		}
+		@Bean TelemetryAspect telemetryAspect(TelemetryProcessor p) { return new TelemetryAspect(p); }
+		@Bean TelemetryIntegrationBootTestService telemetryIntegrationBootTestService(TelemetryContext telemetry) { return new TelemetryIntegrationBootTestService(telemetry); }
+		@Bean RecordingReceiver recordingReceiver() { return new RecordingReceiver(); }
+		@Bean GlobalFallbackReceiver globalFallbackReceiver() { return new GlobalFallbackReceiver(); }
 	}
 
-	/** Test receiver implemented as an annotation-driven handler. */
-	@TelemetryEventHandler
-	static class RecordingReceiver {
+	/** Global fallbacks with phase filtering via method parameter (no lifecycle element on the annotation). */
+	@GlobalFlowFallback
+	static class GlobalFallbackReceiver {
 		final List<TelemetryHolder> starts = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> finishes = new CopyOnWriteArrayList<>();
 		final List<List<TelemetryHolder>> rootBatches = new CopyOnWriteArrayList<>();
 		final List<CustomTag> finishCustomTags = new CopyOnWriteArrayList<>();
 
-		// NEW: Collections to verify error dispatch rules
+		@OnFlowNotMatched
+		public void onStart(TelemetryHolder holder, Lifecycle phase) {
+			if (phase == Lifecycle.FLOW_STARTED) starts.add(holder);
+		}
+
+		@OnFlowNotMatched
+		public void onFinish(TelemetryHolder holder, Lifecycle phase) {
+			if (phase == Lifecycle.FLOW_FINISHED) finishes.add(holder);
+		}
+
+		@OnFlowNotMatched
+		public void onFinishCustomTag(@PullAttribute(name = "custom.tag") CustomTag customTag, Lifecycle phase) {
+			if (phase == Lifecycle.FLOW_FINISHED) finishCustomTags.add(customTag);
+		}
+
+		@OnFlowNotMatched
+		public void onRoot(List<TelemetryHolder> batch, Lifecycle phase) {
+			// batch is only populated at ROOT_FLOW_FINISHED by the binder
+			if (phase == Lifecycle.ROOT_FLOW_FINISHED && batch != null) rootBatches.add(batch);
+		}
+	}
+
+	/** Named handlers for a thrown flow (success/completed/failure) */
+	@EventReceiver
+	static class RecordingReceiver {
 		final List<TelemetryHolder> normalOnErrorFinishes = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> alwaysOnErrorFinishes = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> errorFinishes = new CopyOnWriteArrayList<>();
 		final List<Throwable> capturedErrors = new CopyOnWriteArrayList<>();
 
-		/* ---------- unmatched fallbacks replacing old @OnUnhandledEvent ---------- */
+		@OnFlowSuccess(name = "flowError")
+		public void normalFinishOnError(TelemetryHolder holder) { normalOnErrorFinishes.add(holder); }
 
-		@OnUnMatchedEvent(
-				scope = OnUnMatchedEvent.Scope.GLOBAL,
-				lifecycle = {Lifecycle.FLOW_STARTED},
-				mode = DispatchMode.COMBINED)
-		public void onStart(TelemetryHolder holder) {
-			starts.add(holder);
-		}
+		@OnFlowCompleted(name = "flowError")
+		public void alwaysFinishOnError(TelemetryHolder holder) { alwaysOnErrorFinishes.add(holder); }
 
-		@OnUnMatchedEvent(
-				scope = OnUnMatchedEvent.Scope.GLOBAL,
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				mode = DispatchMode.COMBINED)
-		public void onFinish(TelemetryHolder holder) {
-			finishes.add(holder);
-		}
-
-		/**
-		 * Attribute-bound parameter: injects "custom.tag" as a CustomTag object from the finished flow's attributes.
-		 */
-		@OnUnMatchedEvent(
-				scope = OnUnMatchedEvent.Scope.GLOBAL,
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				mode = DispatchMode.COMBINED)
-		public void onFinishCustomTag(@PullAttribute(name = "custom.tag") CustomTag customTag) {
-			finishCustomTags.add(customTag);
-		}
-
-		@OnUnMatchedEvent(
-				scope = OnUnMatchedEvent.Scope.GLOBAL,
-				lifecycle = {Lifecycle.ROOT_FLOW_FINISHED},
-				mode = DispatchMode.SUCCESS)
-		public void onRoot(List<TelemetryHolder> batch) {
-			rootBatches.add(batch);
-		}
-
-		/* ===== Dispatch-mode verification handlers for error path (exact name filter) ===== */
-
-		// SUCCESS handler (should NOT be called when the flow has an exception)
-		@OnEvent(
-				name = "flowError",
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				mode = DispatchMode.SUCCESS)
-		public void normalFinishOnError(TelemetryHolder holder) {
-			normalOnErrorFinishes.add(holder);
-		}
-
-		// COMBINED handler (should be called even on exception)
-		@OnEvent(
-				name = "flowError",
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				mode = DispatchMode.COMBINED)
-		public void alwaysFinishOnError(TelemetryHolder holder) {
-			alwaysOnErrorFinishes.add(holder);
-		}
-
-		// FAILURE handler (should be called exactly once when there is an exception)
-		@OnEvent(
-				name = "flowError",
-				lifecycle = {Lifecycle.FLOW_FINISHED},
-				mode = DispatchMode.FAILURE)
+		@OnFlowFailure(name = "flowError")
 		public void errorFinishOnError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
 			errorFinishes.add(holder);
 			capturedErrors.add(ex);
@@ -219,76 +155,40 @@ class TelemetryIntegrationBootTest {
 
 	@Kind(SpanKind.SERVER)
 	static class TelemetryIntegrationBootTestService {
-
 		private final TelemetryContext telemetry;
-
-		TelemetryIntegrationBootTestService(TelemetryContext telemetry) {
-			this.telemetry = telemetry;
-		}
+		TelemetryIntegrationBootTestService(TelemetryContext telemetry) { this.telemetry = telemetry; }
 
 		@Flow(name = "flowA")
-		public String flowA() {
-			((TelemetryIntegrationBootTestService) AopContext.currentProxy()).stepB();
-			return "ok";
-		}
+		public String flowA() { ((TelemetryIntegrationBootTestService) AopContext.currentProxy()).stepB(); return "ok"; }
 
 		@Step(name = "stepB")
 		public void stepB() {
-			telemetry.putAttr("step.flag", true); // persisted
-			telemetry.putContext("step.ctx", "ctx-value"); // ephemeral
+			telemetry.putAttr("step.flag", true);
+			telemetry.putContext("step.ctx", "ctx-value");
 		}
 
-		@Kind(SpanKind.PRODUCER)
-		@Step(name = "lonelyStep")
-		public void lonelyStep() {
-			/* no-op */
-		}
+		@Kind(SpanKind.PRODUCER) @Step(name = "lonelyStep") public void lonelyStep() { /* no-op */ }
+		@Kind(SpanKind.CLIENT) @Flow(name = "flowClient") public void flowClient() { /* no-op */ }
+		@Flow(name = "rootFlow") public void rootFlow() { ((TelemetryIntegrationBootTestService) AopContext.currentProxy()).nestedFlow(); }
+		@Flow(name = "nestedFlow") public void nestedFlow() { /* no-op */ }
 
-		@Kind(SpanKind.CLIENT)
-		@Flow(name = "flowClient")
-		public void flowClient() {
-			/* no-op */
-		}
-
-		@Flow(name = "rootFlow")
-		public void rootFlow() {
-			((TelemetryIntegrationBootTestService) AopContext.currentProxy()).nestedFlow();
-		}
-
-		@Flow(name = "nestedFlow")
-		public void nestedFlow() {
-			/* no-op */
-		}
-
-		// Example method showing how @Attribute on params would flow into OAttributes via binder
 		@Flow(name = "paramFlowExample")
-		public void paramFlowExample(
-				@PushAttribute(name = "user.id") String userId,
-				@PushAttribute(name = "flags") Map<String, Object> flags) {
-			/* no-op */
-		}
+		public void paramFlowExample(@PushAttribute(name = "user.id") String userId,
+									 @PushAttribute(name = "flags") Map<String, Object> flags) { /* no-op */ }
 
-		// NEW: a flow that throws to test dispatch-mode behavior
-		@Flow(name = "flowError")
-		public void flowError() {
-			throw new IllegalStateException("boom");
-		}
+		@Flow(name = "flowError") public void flowError() { throw new IllegalStateException("boom"); }
 	}
 
-	@Autowired
-	TelemetryIntegrationBootTestService service;
-
-	@Autowired
-	RecordingReceiver receiver;
+	@Autowired TelemetryIntegrationBootTestService service;
+	@Autowired RecordingReceiver receiver;
+	@Autowired GlobalFallbackReceiver fallback;
 
 	@BeforeEach
 	void reset() {
-		receiver.starts.clear();
-		receiver.finishes.clear();
-		receiver.rootBatches.clear();
-		receiver.finishCustomTags.clear();
-
-		// NEW: reset error-path collections
+		fallback.starts.clear();
+		fallback.finishes.clear();
+		fallback.rootBatches.clear();
+		fallback.finishCustomTags.clear();
 		receiver.normalOnErrorFinishes.clear();
 		receiver.alwaysOnErrorFinishes.clear();
 		receiver.errorFinishes.clear();
@@ -296,23 +196,16 @@ class TelemetryIntegrationBootTest {
 	}
 
 	@Test
-	@DisplayName(
-			"Flow + Step: step holder seen by handlers has attr+context; parent flow keeps them only on folded OEvent")
+	@DisplayName("Flow + Step: step holder seen by handlers has attr+context; parent flow keeps them only on folded OEvent")
 	void stepWritesAttrAndContext_FlowHasThemOnlyOnEvent() {
 		String out = service.flowA();
 		assertThat(out).isEqualTo("ok");
 
-		assertThat(receiver.starts).hasSize(2);
-		assertThat(receiver.finishes).hasSize(2);
+		assertThat(fallback.starts).hasSize(2);
+		assertThat(fallback.finishes).hasSize(2);
 
-		TelemetryHolder stepFinish = receiver.finishes.stream()
-				.filter(TelemetryHolder::isStep)
-				.findFirst()
-				.orElseThrow(() -> new AssertionError("Expected step finish holder"));
-		TelemetryHolder flowFinish = receiver.finishes.stream()
-				.filter(h -> !h.isStep())
-				.findFirst()
-				.orElseThrow(() -> new AssertionError("Expected flow finish holder"));
+		TelemetryHolder stepFinish = fallback.finishes.stream().filter(TelemetryHolder::isStep).findFirst().orElseThrow();
+		TelemetryHolder flowFinish = fallback.finishes.stream().filter(h -> !h.isStep()).findFirst().orElseThrow();
 
 		assertThat(stepFinish.isStep()).isTrue();
 		assertThat(stepFinish.attributes().asMap()).containsEntry("step.flag", true);
@@ -322,11 +215,7 @@ class TelemetryIntegrationBootTest {
 		assertThat(flowFinish.attributes().asMap()).doesNotContainKey("step.flag");
 		assertThat(flowFinish.getEventContext().get("step.ctx")).isNull();
 
-		OEvent stepEvent = flowFinish.events().stream()
-				.filter(e -> "stepB".equals(e.name()))
-				.findFirst()
-				.orElseThrow(() -> new AssertionError("Expected folded stepB event on flow holder"));
-
+		OEvent stepEvent = flowFinish.events().stream().filter(e -> "stepB".equals(e.name())).findFirst().orElseThrow();
 		assertThat(stepEvent.attributes().asMap()).containsEntry("step.flag", true);
 		assertThat(stepEvent.eventContext()).containsEntry("step.ctx", "ctx-value");
 		assertThat(stepEvent.epochNanos()).isPositive();
@@ -338,10 +227,10 @@ class TelemetryIntegrationBootTest {
 	void lonelyStepWithAutoFlowIsPromotedAndHasFlowAttrs() {
 		service.lonelyStep();
 
-		assertThat(receiver.starts).hasSize(1);
-		assertThat(receiver.finishes).hasSize(1);
+		assertThat(fallback.starts).hasSize(1);
+		assertThat(fallback.finishes).hasSize(1);
 
-		TelemetryHolder start = receiver.starts.get(0);
+		TelemetryHolder start = fallback.starts.get(0);
 		assertThat(start.name()).isEqualTo("lonelyStep");
 		assertThat(start.kind()).isEqualTo(SpanKind.PRODUCER);
 		assertTraceAndSpanIds(start);
@@ -350,7 +239,6 @@ class TelemetryIntegrationBootTest {
 		Map<String, Object> attrs = start.attributes().asMap();
 		log.info("lonelyStep attributes: {}", attrs);
 		assertThat(attrs).containsEntry("test.flow", "lonelyStep").containsEntry("declaring.method", "lonelyStep");
-
 		assertThat(attrs.get("custom.tag")).isInstanceOf(CustomTag.class);
 		assertThat(((CustomTag) attrs.get("custom.tag")).value()).isEqualTo("integration");
 	}
@@ -359,8 +247,8 @@ class TelemetryIntegrationBootTest {
 	@DisplayName("Method-level @Kind overrides class-level kind; attributes present")
 	void methodLevelKindOverridesClassKindAndAttrsPresent() {
 		service.flowClient();
-		assertThat(receiver.starts).hasSize(1);
-		TelemetryHolder h = receiver.starts.get(0);
+		assertThat(fallback.starts).hasSize(1);
+		TelemetryHolder h = fallback.starts.get(0);
 		assertThat(h.kind()).isEqualTo(SpanKind.CLIENT);
 
 		Map<String, Object> attrs = h.attributes().asMap();
@@ -373,12 +261,9 @@ class TelemetryIntegrationBootTest {
 	void rootFlowBatchContainsAllFlowsInExecutionOrderAndAttrsPresent() {
 		service.rootFlow();
 
-		assertThat(receiver.rootBatches).hasSize(1);
-		List<TelemetryHolder> batch = receiver.rootBatches.get(0);
-		log.info(
-				"rootFlow batch (size={}): {}",
-				batch.size(),
-				batch.stream().map(TelemetryHolder::name).toList());
+		assertThat(fallback.rootBatches).hasSize(1);
+		List<TelemetryHolder> batch = fallback.rootBatches.get(0);
+		log.info("rootFlow batch (size={}): {}", batch.size(), batch.stream().map(TelemetryHolder::name).toList());
 
 		assertThat(batch).hasSize(2);
 		TelemetryHolder first = batch.get(0);
@@ -407,50 +292,31 @@ class TelemetryIntegrationBootTest {
 
 		service.paramFlowExample("user-123", flags);
 
-		assertThat(receiver.starts).hasSize(1);
-		TelemetryHolder start = receiver.starts.get(0);
+		assertThat(fallback.starts).hasSize(1);
+		TelemetryHolder start = fallback.starts.get(0);
 
 		Map<String, Object> attrs = start.attributes().asMap();
 		log.info("paramFlowExample attributes: {}", attrs);
 
 		assertThat(attrs)
-				.containsEntry("user.id", "user-123")
-				.containsEntry("flags", flags)
-				.containsEntry("test.flow", "paramFlowExample")
-				.containsEntry("declaring.method", "paramFlowExample");
+			.containsEntry("user.id", "user-123")
+			.containsEntry("flags", flags)
+			.containsEntry("test.flow", "paramFlowExample")
+			.containsEntry("declaring.method", "paramFlowExample");
 	}
 
 	@Test
-	@DisplayName("@OnUnMatchedEvent handler can take an OBJECT sourced from attributes")
-	void onEventHandlerReceivesObjectFromAttributes() {
-		service.flowA();
-
-		var nonNullTags =
-				receiver.finishCustomTags.stream().filter(Objects::nonNull).toList();
-
-		assertThat(nonNullTags)
-				.as("Expected one non-null CustomTag from flow finish")
-				.hasSize(1);
-		assertThat(nonNullTags.get(0).value()).isEqualTo("integration");
-	}
-
-	/* NEW TEST: verify SUCCESS is skipped when there is an exception; FAILURE + COMBINED run */
-	@Test
-	@DisplayName("Exception dispatch: FAILURE + COMBINED run, SUCCESS is skipped")
-	void exceptionDispatchesFailureAndCombinedOnly() {
+	@DisplayName("Exception dispatch: FAILURE + COMPLETED run, SUCCESS is skipped")
+	void exceptionDispatchesFailureAndCompletedOnly() {
 		assertThatThrownBy(() -> service.flowError())
-				.isInstanceOf(IllegalStateException.class)
-				.hasMessageContaining("boom");
+			.isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("boom");
 
-		// EXACTLY one FAILURE handler invocation for flowError
 		assertThat(receiver.errorFinishes).hasSize(1);
 		assertThat(receiver.capturedErrors).hasSize(1);
 		assertThat(receiver.capturedErrors.get(0)).isInstanceOf(IllegalStateException.class);
 
-		// COMBINED for flowError should run
 		assertThat(receiver.alwaysOnErrorFinishes).hasSize(1);
-
-		// SUCCESS for flowError must NOT run when throwable is present
 		assertThat(receiver.normalOnErrorFinishes).isEmpty();
 	}
 

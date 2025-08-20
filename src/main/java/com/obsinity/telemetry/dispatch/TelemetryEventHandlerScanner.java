@@ -1,18 +1,11 @@
+// src/main/java/com/obsinity/telemetry/dispatch/TelemetryEventHandlerScanner.java
 package com.obsinity.telemetry.dispatch;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.BitSet;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.regex.Pattern;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import org.springframework.aop.support.AopUtils;
@@ -20,28 +13,46 @@ import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.AnnotationUtils;
+import org.springframework.core.annotation.MergedAnnotation;
+import org.springframework.core.annotation.MergedAnnotations;
 
 import io.opentelemetry.api.trace.SpanKind;
-import com.obsinity.telemetry.annotations.DispatchMode;
-import com.obsinity.telemetry.annotations.EventScope;
-import com.obsinity.telemetry.annotations.OnEvent;
-import com.obsinity.telemetry.annotations.OnEveryEvent;
-import com.obsinity.telemetry.annotations.OnUnMatchedEvent;
+
+import com.obsinity.telemetry.annotations.EventReceiver;
+import com.obsinity.telemetry.annotations.GlobalFlowFallback;
+import com.obsinity.telemetry.annotations.OnEventLifecycle;
+import com.obsinity.telemetry.annotations.OnEventScope;
+import com.obsinity.telemetry.annotations.OnFlowStarted;
+import com.obsinity.telemetry.annotations.OnFlowCompleted;
+import com.obsinity.telemetry.annotations.OnFlowFailure;
+import com.obsinity.telemetry.annotations.OnFlowNotMatched;
+import com.obsinity.telemetry.annotations.OnFlowSuccess;
+import com.obsinity.telemetry.annotations.OnOutcome;
+import com.obsinity.telemetry.annotations.Outcome;
+
 import com.obsinity.telemetry.annotations.PullAllContextValues;
 import com.obsinity.telemetry.annotations.PullAttribute;
 import com.obsinity.telemetry.annotations.PullContextValue;
-import com.obsinity.telemetry.annotations.TelemetryEventHandler;
+
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 
 /**
- * Scans Spring beans annotated with {@link TelemetryEventHandler} and produces a registry of {@link HandlerGroup}s.
+ * Scans Spring beans annotated with {@link EventReceiver} (or {@link GlobalFlowFallback})
+ * and produces a registry of {@link HandlerGroup}s for flow-centric dispatch.
  *
- * <p>Includes fail-fast validation to catch common misconfigurations and exact duplicate @OnEvent registrations.
+ * Authoring semantics:
+ *  - Component filters: {@code @OnEventScope} (repeatable, prefix OR) and {@code @OnEventLifecycle} (repeatable).
+ *  - Handlers:
+ *      @OnFlow(name)                  -> completed
+ *      @OnFlowSuccess(name)           -> success
+ *      @OnFlowFailure(name)           -> failure
+ *      @OnFlowCompleted(name)         -> completed (or narrowed via @OnOutcome)
+ *      @OnFlowNotMatched              -> component/global fallback
  *
- * <p>Special binding: methods that declare a {@code List<TelemetryHolder>} parameter for
- * {@code lifecycle=ROOT_FLOW_FINISHED} receive the full batch from {@link TelemetryProcessorSupport#getBatch()}.
+ * Batch binding:
+ *  Methods declaring a parameter of type List<TelemetryHolder> are only valid for ROOT_FLOW_FINISHED.
  */
 @Configuration
 public class TelemetryEventHandlerScanner {
@@ -56,87 +67,105 @@ public class TelemetryEventHandlerScanner {
 
 	@Bean
 	public List<HandlerGroup> handlerGroups() {
-		Map<String, Object> beans = beanFactory.getBeansWithAnnotation(TelemetryEventHandler.class);
-		List<HandlerGroup> groups = new ArrayList<>(beans.size());
+		// Gather both receiver types
+		Map<String, Object> receivers = new LinkedHashMap<>();
+		receivers.putAll(beanFactory.getBeansWithAnnotation(EventReceiver.class));
+		receivers.putAll(beanFactory.getBeansWithAnnotation(GlobalFlowFallback.class));
 
-		for (Map.Entry<String, Object> entry : beans.entrySet()) {
+		List<HandlerGroup> groups = new ArrayList<>(receivers.size());
+
+		for (Map.Entry<String, Object> entry : receivers.entrySet()) {
 			Object bean = entry.getValue();
 			Class<?> userClass = AopUtils.getTargetClass(bean);
 			String componentName = userClass.getSimpleName();
-			EventScope eventScope = AnnotationUtils.getAnnotation(userClass, EventScope.class);
-			HandlerGroup group;
 
-			if (eventScope != null) {
-				HandlerGroup.Scope scope = HandlerGroup.Scope.of(
-						eventScope.prefixes(), eventScope.lifecycles(), eventScope.kinds(), eventScope.errorMode());
-				group = new HandlerGroup(componentName, scope);
-			} else {
-				group = new HandlerGroup(componentName);
+			boolean isGlobalFallback = AnnotationUtils.findAnnotation(userClass, GlobalFlowFallback.class) != null;
+
+			// Build component scope (prefix filters + lifecycle filters)
+			List<String> prefixes = readRepeatable(userClass, OnEventScope.class).stream()
+				.map(ann -> {
+					Object v = AnnotationUtils.getValue(ann, "value");
+					if (v == null || String.valueOf(v).isBlank()) {
+						v = AnnotationUtils.getValue(ann, "prefix");
+					}
+					return (v == null) ? "" : String.valueOf(v);
+				})
+				.filter(s -> s != null && !s.isBlank())
+				.toList();
+
+			// Repeatable lifecycles: merge all values into one set
+			Set<Lifecycle> lifecycleSet = readRepeatable(userClass, OnEventLifecycle.class).stream()
+				.flatMap(a -> {
+					Object v = AnnotationUtils.getValue(a, "value");
+					if (v instanceof Lifecycle[] arr) return Arrays.stream(arr);
+					if (v instanceof Lifecycle lc) return Arrays.stream(new Lifecycle[]{lc});
+					return Arrays.<Lifecycle>stream(new Lifecycle[0]);
+				})
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+
+			HandlerGroup.Scope scope = HandlerGroup.Scope.of(
+				prefixes.toArray(String[]::new),
+				lifecycleSet.isEmpty() ? null : lifecycleSet.toArray(new Lifecycle[0])
+			);
+
+			HandlerGroup group = new HandlerGroup(componentName, scope);
+
+			// Track duplicate registrations for exact name+phase+bucket within this component
+			Map<String, List<String>> dupGuard = new LinkedHashMap<>();
+
+			// ---------- Handlers: OnFlow -> completed ----------
+			for (Method m : methodsAnnotated(userClass, OnFlowStarted.class)) {
+				String name = readAliasedName(m, OnFlowStarted.class);
+				validateNonBlank(userClass, m, "@OnFlow.name", name);
+
+				registerForAllPhases(group, bean, userClass, m, name, Bucket.COMPLETED, dupGuard);
 			}
 
-			// Track exact @OnEvent duplicates: key = name|phase|mode -> handlers (for this component only)
-			Map<String, List<String>> onEventKeysToHandlers = new LinkedHashMap<>();
+			// ---------- Handlers: OnFlowSuccess -> success ----------
+			for (Method m : methodsAnnotated(userClass, OnFlowSuccess.class)) {
+				String name = readAliasedName(m, OnFlowSuccess.class);
+				validateNonBlank(userClass, m, "@OnFlowSuccess.name", name);
 
-			// @OnEvent
-			for (Method m : methodsAnnotated(userClass, OnEvent.class)) {
-				OnEvent a = m.getAnnotation(OnEvent.class);
-				validateOnEventMethod(userClass, m, a);
-
-				String exactName = a.name();
-				DispatchMode mode = a.mode();
-				Lifecycle[] phases =
-						(a.lifecycle() == null || a.lifecycle().length == 0) ? Lifecycle.values() : a.lifecycle();
-
-				// record keys for duplicate detection
-				for (Lifecycle p : phases) {
-					String dupKey = dupKey(exactName, p, mode);
-					onEventKeysToHandlers
-							.computeIfAbsent(dupKey, k -> new ArrayList<>())
-							.add(userClass.getSimpleName() + "#" + m.getName());
-				}
-
-				Handler h = buildOnEventHandler(bean, userClass, m, exactName, mode, a);
-				for (Lifecycle p : phases) {
-					group.registerOnEvent(exactName, p, mode, h);
-				}
+				registerForAllPhases(group, bean, userClass, m, name, Bucket.SUCCESS, dupGuard);
 			}
-			validateNoExactOnEventDuplicates(userClass, onEventKeysToHandlers);
 
-			// @OnEveryEvent (taps)
-			for (Method m : methodsAnnotated(userClass, OnEveryEvent.class)) {
-				OnEveryEvent a = m.getAnnotation(OnEveryEvent.class);
-				validateBatchParamIfPresent(userClass, m, a.lifecycle(), false, "@OnEveryEvent");
+			// ---------- Handlers: OnFlowFailure -> failure ----------
+			for (Method m : methodsAnnotated(userClass, OnFlowFailure.class)) {
+				String name = readAliasedName(m, OnFlowFailure.class);
+				validateNonBlank(userClass, m, "@OnFlowFailure.name", name);
 
-				DispatchMode mode = a.mode();
-				Lifecycle[] phases = (a.lifecycle() == null) ? new Lifecycle[0] : a.lifecycle();
+				registerForAllPhases(group, bean, userClass, m, name, Bucket.FAILURE, dupGuard);
+			}
 
-				Handler h = buildOnEveryEventHandler(bean, userClass, m, mode, a);
-				if (phases.length == 0) {
-					group.registerTap(mode, h);
-				} else {
-					group.registerTap(mode, h, phases);
+			// ---------- Handlers: OnFlowCompleted -> completed or narrowed by @OnOutcome ----------
+			for (Method m : methodsAnnotated(userClass, OnFlowCompleted.class)) {
+				String name = readAliasedName(m, OnFlowCompleted.class);
+				validateNonBlank(userClass, m, "@OnFlowCompleted.name", name);
+
+				Set<Bucket> buckets = outcomeBucketsFor(m);
+				for (Bucket b : buckets) {
+					registerForAllPhases(group, bean, userClass, m, name, b, dupGuard);
 				}
 			}
 
-			// @OnUnMatchedEvent
-			for (Method m : methodsAnnotated(userClass, OnUnMatchedEvent.class)) {
-				OnUnMatchedEvent a = m.getAnnotation(OnUnMatchedEvent.class);
-				validateBatchParamIfPresent(userClass, m, a.lifecycle(), false, "@OnUnMatchedEvent");
+			// ---------- Component/global not matched ----------
+			for (Method m : methodsAnnotated(userClass, OnFlowNotMatched.class)) {
+				validateBatchParamIfPresent(userClass, m, new Lifecycle[]{Lifecycle.ROOT_FLOW_FINISHED}, false, "@OnFlowNotMatched");
+				Handler h = buildHandler(bean, userClass, m, null);
+				// If the annotation carries lifecycle filtering, honor it; otherwise all phases
+				Lifecycle[] phases = readLifecycleArray(m, OnFlowNotMatched.class);
+				Lifecycle[] toRegister = (phases == null || phases.length == 0) ? Lifecycle.values() : phases;
 
-				Lifecycle[] phases =
-						(a.lifecycle() == null || a.lifecycle().length == 0) ? Lifecycle.values() : a.lifecycle();
-				DispatchMode mode = a.mode();
-
-				Handler h = buildOnUnmatchedHandler(bean, userClass, m, mode, phases);
-				for (Lifecycle p : phases) {
-					if (a.scope() == OnUnMatchedEvent.Scope.COMPONENT) {
-						group.registerComponentUnmatched(p, mode, h);
+				for (Lifecycle p : toRegister) {
+					if (isGlobalFallback) {
+						group.registerGlobalUnmatchedCompleted(p, h);
 					} else {
-						group.registerGlobalUnmatched(p, mode, h);
+						group.registerComponentUnmatchedCompleted(p, h);
 					}
 				}
 			}
 
+			validateNoExactDuplicates(userClass, dupGuard);
 			groups.add(group);
 		}
 
@@ -145,98 +174,69 @@ public class TelemetryEventHandlerScanner {
 	}
 
 	/* =========================
-	Handler builders
-	========================= */
+	   Registration helpers
+	   ========================= */
 
-	private Handler buildOnEventHandler(
-			Object bean, Class<?> userClass, Method m, String exactName, DispatchMode mode, OnEvent a) {
-		BitSet lifecycleMask = bitsetForLifecycles(a.lifecycle());
-		BitSet kindMask = bitsetForKinds(a.kinds());
+	private enum Bucket { COMPLETED, SUCCESS, FAILURE }
 
-		List<Class<? extends Throwable>> throwableTypes = (a.throwableTypes() == null || a.throwableTypes().length == 0)
-				? List.of()
-				: List.of(a.throwableTypes());
+	private void registerForAllPhases(
+		HandlerGroup group,
+		Object bean,
+		Class<?> userClass,
+		Method m,
+		String exactName,
+		Bucket bucket,
+		Map<String, List<String>> dupGuard
+	) {
+		validateBatchParamIfPresent(userClass, m, new Lifecycle[]{Lifecycle.ROOT_FLOW_FINISHED}, false, "flow handler");
 
-		boolean includeSubclasses = a.includeSubclasses();
-		Pattern messagePattern =
-				(a.messageRegex() == null || a.messageRegex().isEmpty()) ? null : Pattern.compile(a.messageRegex());
+		Handler h = buildHandler(bean, userClass, m, exactName);
+		for (Lifecycle p : Lifecycle.values()) {
+			String key = dupKey(exactName, p, bucket);
+			dupGuard.computeIfAbsent(key, k -> new ArrayList<>()).add(userClass.getSimpleName() + "#" + m.getName());
 
-		Class<?> causeTypeOrNull = null;
-		if (a.causeType() != null && !a.causeType().isEmpty()) {
-			try {
-				causeTypeOrNull = Class.forName(a.causeType());
-			} catch (ClassNotFoundException ignored) {
-				/* optional */
+			switch (bucket) {
+				case COMPLETED -> group.registerFlowCompleted(exactName, p, h);
+				case SUCCESS   -> group.registerFlowSuccess(exactName, p, h);
+				case FAILURE   -> group.registerFlowFailure(exactName, p, h);
 			}
 		}
-
-		List<ParamBinder> binders = buildParamBinders(m);
-		String id = userClass.getSimpleName() + "#" + m.getName();
-
-		return new Handler(
-				bean,
-				m,
-				exactName,
-				lifecycleMask,
-				kindMask,
-				mode,
-				throwableTypes,
-				includeSubclasses,
-				messagePattern,
-				causeTypeOrNull,
-				binders, /*requiredAttrs*/
-				Set.of(),
-				id);
 	}
 
-	private Handler buildOnEveryEventHandler(
-			Object bean, Class<?> userClass, Method m, DispatchMode mode, OnEveryEvent a) {
-		BitSet lifecycleMask = bitsetForLifecycles(a.lifecycle());
-		BitSet kindMask = bitsetForKinds(a.kinds());
+	private Handler buildHandler(
+		Object bean,
+		Class<?> userClass,
+		Method m,
+		String exactNameOrNull
+	) {
+		BitSet lifecycleMask = null; // per-handler lifecycle mask not used in flow-centric routing
+		BitSet kindMask = null;
 
 		List<ParamBinder> binders = buildParamBinders(m);
 		String id = userClass.getSimpleName() + "#" + m.getName();
 
+		// Throwable filters:
+		// - For success/completed buckets, scanner leaves empty filters; dispatcher won't route here on failure.
+		// - For failure buckets, filters can be expanded later via dedicated annotations (not shown here).
 		return new Handler(
-				bean,
-				m,
-				null,
-				lifecycleMask,
-				kindMask,
-				mode,
-				List.of(),
-				true,
-				null,
-				null,
-				binders, /*requiredAttrs*/
-				Set.of(),
-				id);
-	}
-
-	private Handler buildOnUnmatchedHandler(
-			Object bean, Class<?> userClass, Method m, DispatchMode mode, Lifecycle[] lifecycles) {
-		List<ParamBinder> binders = buildParamBinders(m);
-		String id = userClass.getSimpleName() + "#" + m.getName();
-
-		return new Handler(
-				bean,
-				m,
-				null,
-				bitsetForLifecycles(lifecycles),
-				null,
-				mode,
-				List.of(),
-				true,
-				null,
-				null,
-				binders, /*requiredAttrs*/
-				Set.of(),
-				id);
+			bean,
+			m,
+			exactNameOrNull,
+			lifecycleMask,
+			kindMask,
+			List.of(),     // throwableTypes
+			true,          // includeSubclasses (n/a without types)
+			null,          // messagePattern
+			null,          // causeTypeOrNull
+			binders,
+			Set.of(),      // required attributes (n/a here)
+			id
+		);
 	}
 
 	/* =========================
-	Param binding (annotation-aware)
-	========================= */
+	   Param binding (annotation-aware)
+	   ========================= */
 
 	private List<ParamBinder> buildParamBinders(Method m) {
 		Class<?>[] pts = m.getParameterTypes();
@@ -248,13 +248,11 @@ public class TelemetryEventHandlerScanner {
 			Class<?> pt = pts[i];
 			Annotation[] anns = pann[i];
 
-			// Validate illegal mixes on the same parameter
 			validatePullAnnotationExclusivity(m, i, anns);
 
-			// 1) Annotation-driven binders first
 			ParamBinder b = buildAnnotationBinder(pt, anns);
 
-			// 2) Special case: List<TelemetryHolder> for ROOT_FLOW_FINISHED batch injection (sourced from support)
+			// Special case: List<TelemetryHolder> batch for ROOT_FLOW_FINISHED
 			if (b == null && List.class.isAssignableFrom(pt) && gpts[i] instanceof ParameterizedType ptype) {
 				Type[] args = ptype.getActualTypeArguments();
 				if (args.length == 1 && args[0] instanceof Class<?> c && TelemetryHolder.class.isAssignableFrom(c)) {
@@ -270,7 +268,7 @@ public class TelemetryEventHandlerScanner {
 				}
 			}
 
-			// 3) Defaults for well-known types
+			// Defaults
 			if (b == null) {
 				if (TelemetryHolder.class.isAssignableFrom(pt)) {
 					b = (holder, phase, error) -> holder;
@@ -280,7 +278,7 @@ public class TelemetryEventHandlerScanner {
 					b = (holder, phase, error) -> error;
 				} else if (SpanKind.class.isAssignableFrom(pt)) {
 					b = (holder, phase, error) ->
-							(holder == null ? null : (holder.kind() == null ? SpanKind.INTERNAL : holder.kind()));
+						(holder == null ? null : (holder.kind() == null ? SpanKind.INTERNAL : holder.kind()));
 				} else {
 					b = (holder, phase, error) -> null;
 				}
@@ -293,31 +291,42 @@ public class TelemetryEventHandlerScanner {
 	private static ParamBinder buildAnnotationBinder(Class<?> pt, Annotation[] anns) {
 		if (anns == null || anns.length == 0) return null;
 
-		for (Annotation a : anns) {
-			// @PullAttribute("key")
-			if (a instanceof PullAttribute pa) {
-				final String key = firstNonBlank(pa.value(), pa.name());
-				if (isBlank(key)) return (h, p, e) -> null;
-				return (holder, phase, error) -> {
-					if (holder == null) return null;
-					var attrs = holder.attributes();
-					Object v = (attrs == null) ? null : attrs.asMap().get(key);
-					return castIfPossible(pt, v);
-				};
+		for (Annotation raw : anns) {
+			Class<? extends Annotation> at = raw.annotationType();
+
+			MergedAnnotation<?> ma = MergedAnnotations.from(raw).get(at);
+			// @PullAttribute("key") / alias "name"
+			if (raw instanceof PullAttribute) {
+				String key = strOrBlank(ma.getValue("value").orElse(null));
+				if (key.isBlank()) key = strOrBlank(ma.getValue("name").orElse(null));
+				final String fkey = key;
+				if (!fkey.isBlank()) {
+					return (holder, phase, error) -> {
+						if (holder == null) return null;
+						var attrs = holder.attributes();
+						Object v = (attrs == null) ? null : attrs.asMap().get(fkey);
+						return castIfPossible(pt, v);
+					};
+				}
+				continue;
 			}
-			// @PullContextValue("key")
-			if (a instanceof PullContextValue pcv) {
-				final String key = firstNonBlank(pcv.value(), pcv.name());
-				if (isBlank(key)) return (h, p, e) -> null;
-				return (holder, phase, error) -> {
-					if (holder == null) return null;
-					Map<String, Object> ctx = holder.getEventContext();
-					Object v = (ctx == null) ? null : ctx.get(key);
-					return castIfPossible(pt, v);
-				};
+			// @PullContextValue("key") / alias "name"
+			if (raw instanceof PullContextValue) {
+				String key = strOrBlank(ma.getValue("value").orElse(null));
+				if (key.isBlank()) key = strOrBlank(ma.getValue("name").orElse(null));
+				final String fkey = key;
+				if (!fkey.isBlank()) {
+					return (holder, phase, error) -> {
+						if (holder == null) return null;
+						Map<String, Object> ctx = holder.getEventContext();
+						Object v = (ctx == null) ? null : ctx.get(fkey);
+						return castIfPossible(pt, v);
+					};
+				}
+				continue;
 			}
-			// @PullAllContextValues — inject the whole Map
-			if (a instanceof PullAllContextValues) {
+			// @PullAllContextValues — inject Map
+			if (raw instanceof PullAllContextValues) {
 				if (Map.class.isAssignableFrom(pt)) {
 					return (holder, phase, error) -> {
 						if (holder == null) return Map.of();
@@ -334,7 +343,6 @@ public class TelemetryEventHandlerScanner {
 	private static Object castIfPossible(Class<?> target, Object value) {
 		if (value == null) return null;
 		if (target.isInstance(value)) return value;
-		// Numeric coercions
 		if (target == Integer.class && value instanceof Number n) return n.intValue();
 		if (target == Long.class && value instanceof Number n) return n.longValue();
 		if (target == Double.class && value instanceof Number n) return n.doubleValue();
@@ -343,56 +351,45 @@ public class TelemetryEventHandlerScanner {
 	}
 
 	/* =========================
-	Validation helpers
-	========================= */
+	   Validation helpers
+	   ========================= */
 
-	private static void validateOnEventMethod(Class<?> userClass, Method m, OnEvent a) {
-		// name must be non-blank
-		if (a.name() == null || a.name().isBlank()) {
-			throw new IllegalStateException(errPrefix(userClass, m) + "@OnEvent.name must be non-blank");
+	private static void validateNonBlank(Class<?> userClass, Method m, String field, String value) {
+		if (value == null || value.isBlank()) {
+			throw new IllegalStateException(errPrefix(userClass, m) + field + " must be non-blank");
 		}
+	}
 
-		// mode SUCCESS cannot have throwable filters (nonsensical)
-		boolean hasThrowableFilters = (a.throwableTypes() != null && a.throwableTypes().length > 0)
-				|| (a.messageRegex() != null && !a.messageRegex().isBlank())
-				|| (a.causeType() != null && !a.causeType().isBlank());
-
-		if (a.mode() == DispatchMode.SUCCESS && hasThrowableFilters) {
-			throw new IllegalStateException(
-					errPrefix(userClass, m)
-							+ "@OnEvent(mode=SUCCESS) cannot declare throwable filters (throwableTypes/messageRegex/causeType/includeSubclasses)");
+	private static void validateNoExactDuplicates(Class<?> userClass, Map<String, List<String>> dupGuard) {
+		List<String> errors = new ArrayList<>();
+		for (Map.Entry<String, List<String>> e : dupGuard.entrySet()) {
+			if (e.getValue().size() > 1) {
+				errors.add(String.format("slot [%s] claimed by %s", e.getKey(), e.getValue()));
+			}
+		}
+		if (!errors.isEmpty()) {
+			throw new IllegalStateException("Invalid handler configuration for component "
+				+ userClass.getSimpleName() + ": exact duplicate handler registrations -> " + errors);
 		}
 	}
 
 	private static void validateBatchParamIfPresent(
-			Class<?> userClass, Method m, Lifecycle[] lifecycles, boolean isOnEvent, String where) {
+		Class<?> userClass, Method m, Lifecycle[] lifecycles, boolean unused, String where) {
 		if (!declaresRootBatchParam(m)) return;
 
-		// Ensure lifecycle includes ROOT_FLOW_FINISHED
 		boolean hasRoot = false;
 		if (lifecycles != null && lifecycles.length > 0) {
 			for (Lifecycle lc : lifecycles) {
-				if (lc == Lifecycle.ROOT_FLOW_FINISHED) {
-					hasRoot = true;
-					break;
-				}
+				if (lc == Lifecycle.ROOT_FLOW_FINISHED) { hasRoot = true; break; }
 			}
 		}
 		if (!hasRoot) {
 			throw new IllegalStateException(errPrefix(userClass, m) + where
-					+ " method declares List<TelemetryHolder> but does not include lifecycle=ROOT_FLOW_FINISHED");
+				+ " declares List<TelemetryHolder> but does not include lifecycle=ROOT_FLOW_FINISHED");
 		}
-
-		// Only one List<TelemetryHolder> param per method
 		if (countRootBatchParams(m) > 1) {
-			throw new IllegalStateException(
-					errPrefix(userClass, m) + "at most one List<TelemetryHolder> parameter is allowed");
-		}
-
-		// Guard: we keep semantics symmetrical (no @OnEvent with batch)
-		if (isOnEvent) {
-			throw new IllegalStateException(
-					errPrefix(userClass, m) + where + " cannot be @OnEvent when using List<TelemetryHolder>");
+			throw new IllegalStateException(errPrefix(userClass, m)
+				+ "at most one List<TelemetryHolder> parameter is allowed");
 		}
 	}
 
@@ -402,51 +399,98 @@ public class TelemetryEventHandlerScanner {
 		boolean hasAllCtx = false;
 
 		for (Annotation a : anns) {
-			if (a.annotationType() == PullAttribute.class) pulls++;
-			if (a.annotationType() == PullContextValue.class) pulls++;
-			if (a.annotationType() == PullAllContextValues.class) {
-				pulls++;
-				hasAllCtx = true;
-			}
+			if (a instanceof PullAttribute) pulls++;
+			if (a instanceof PullContextValue) pulls++;
+			if (a instanceof PullAllContextValues) { pulls++; hasAllCtx = true; }
 		}
 
 		if (pulls > 1) {
 			throw new IllegalStateException(String.format(
-					"%sParameter %d mixes multiple Pull* annotations on method %s#%s",
-					errPrefix(m.getDeclaringClass(), m),
-					paramIndex,
-					m.getDeclaringClass().getSimpleName(),
-					m.getName()));
+				"%sParameter %d mixes multiple Pull* annotations on method %s#%s",
+				errPrefix(m.getDeclaringClass(), m),
+				paramIndex, m.getDeclaringClass().getSimpleName(), m.getName()));
 		}
 
 		if (hasAllCtx) {
-			// enforce param type is Map
 			Class<?> pt = m.getParameterTypes()[paramIndex];
 			if (!Map.class.isAssignableFrom(pt)) {
 				throw new IllegalStateException(errPrefix(m.getDeclaringClass(), m)
-						+ "@PullAllContextValues requires parameter type assignable to Map");
+					+ "@PullAllContextValues requires parameter type assignable to Map");
 			}
 		}
 	}
 
-	private static void validateNoExactOnEventDuplicates(
-			Class<?> userClass, Map<String, List<String>> onEventKeysToHandlers) {
-		List<String> errors = new ArrayList<>();
-		for (Map.Entry<String, List<String>> e : onEventKeysToHandlers.entrySet()) {
-			List<String> hs = e.getValue();
-			if (hs.size() > 1) {
-				errors.add(String.format("slot [%s] claimed by %s", e.getKey(), hs));
-			}
-		}
-		if (!errors.isEmpty()) {
-			String msg = "Invalid @OnEvent configuration for component " + userClass.getSimpleName()
-					+ ": exact duplicate handler registrations detected -> " + errors;
-			throw new IllegalStateException(msg);
-		}
+	private static String errPrefix(Class<?> userClass, Method m) {
+		return "Invalid handler [" + userClass.getSimpleName() + "#" + m.getName() + "]: ";
 	}
 
-	private static String dupKey(String name, Lifecycle phase, DispatchMode mode) {
-		return name + "|" + phase.name() + "|" + mode.name();
+	/* =========================
+	   Utils
+	   ========================= */
+
+	private static List<Method> methodsAnnotated(Class<?> c, Class<? extends Annotation> ann) {
+		return Arrays.stream(c.getMethods())
+			.filter(m -> m.isAnnotationPresent(ann))
+			.collect(Collectors.toList());
+	}
+
+	private static String readAliasedName(Method m, Class<? extends Annotation> annotationType) {
+		MergedAnnotation<?> ma = MergedAnnotations.from(m).get(annotationType);
+		if (ma.isPresent()) {
+			String name = ma.getString("name");
+			if (name == null || name.isBlank()) {
+				name = ma.getString("value");
+			}
+			return name;
+		}
+		Annotation ann = AnnotationUtils.findAnnotation(m, annotationType);
+		if (ann != null) {
+			Object v = AnnotationUtils.getValue(ann, "name");
+			if (v == null || String.valueOf(v).isBlank()) v = AnnotationUtils.getValue(ann, "value");
+			return (v == null) ? null : String.valueOf(v);
+		}
+		return null;
+	}
+
+	// replace the whole method
+	private static Lifecycle[] readLifecycleArray(Method m, Class<? extends Annotation> annotationType) {
+		MergedAnnotation<?> ma = MergedAnnotations.from(m).get(annotationType);
+		if (ma.isPresent()) {
+			try {
+				// Spring API: use getValue(name, type) -> Optional<T>
+				java.util.Optional<Lifecycle[]> opt = ma.getValue("lifecycle", Lifecycle[].class);
+				if (opt.isPresent()) return opt.get();
+			} catch (Exception ignored) { }
+		}
+		Annotation ann = AnnotationUtils.findAnnotation(m, annotationType);
+		if (ann != null) {
+			Object v = AnnotationUtils.getValue(ann, "lifecycle");
+			if (v instanceof Lifecycle[] arr) return arr;
+		}
+		return null;
+	}
+
+	private static Set<Bucket> outcomeBucketsFor(Method m) {
+		List<OnOutcome> outs = readRepeatable(m, OnOutcome.class);
+		if (outs.isEmpty()) {
+			return Set.of(Bucket.COMPLETED);
+		}
+		Set<Bucket> set = new LinkedHashSet<>();
+		for (OnOutcome o : outs) {
+			Outcome val = (Outcome) AnnotationUtils.getValue(o, "value");
+			if (val == Outcome.SUCCESS) set.add(Bucket.SUCCESS);
+			else if (val == Outcome.FAILURE) set.add(Bucket.FAILURE);
+		}
+		if (set.isEmpty()) set.add(Bucket.COMPLETED);
+		return set;
+	}
+
+	private static <A extends Annotation> List<A> readRepeatable(Class<?> element, Class<A> type) {
+		return MergedAnnotations.from(element).stream(type).map(MergedAnnotation::synthesize).toList();
+	}
+
+	private static <A extends Annotation> List<A> readRepeatable(Method element, Class<A> type) {
+		return MergedAnnotations.from(element).stream(type).map(MergedAnnotation::synthesize).toList();
 	}
 
 	private static boolean declaresRootBatchParam(Method m) {
@@ -457,7 +501,6 @@ public class TelemetryEventHandlerScanner {
 		Class<?>[] pts = m.getParameterTypes();
 		Type[] gpts = m.getGenericParameterTypes();
 		int count = 0;
-
 		for (int i = 0; i < pts.length; i++) {
 			if (List.class.isAssignableFrom(pts[i]) && gpts[i] instanceof ParameterizedType p) {
 				Type[] args = p.getActualTypeArguments();
@@ -469,45 +512,16 @@ public class TelemetryEventHandlerScanner {
 		return count;
 	}
 
-	private static String errPrefix(Class<?> userClass, Method m) {
-		return "Invalid handler [" + userClass.getSimpleName() + "#" + m.getName() + "]: ";
+	private static String dupKey(String name, Lifecycle phase, Bucket bucket) {
+		String b = switch (bucket) {
+			case COMPLETED -> "C";
+			case SUCCESS   -> "S";
+			case FAILURE   -> "F";
+		};
+		return name + "|" + phase.name() + "|" + b;
 	}
 
-	/* =========================
-	Utilities
-	========================= */
-
-	private static List<Method> methodsAnnotated(Class<?> c, Class<? extends Annotation> ann) {
-		return Arrays.stream(c.getMethods())
-				.filter(m -> m.isAnnotationPresent(ann))
-				.collect(Collectors.toList());
-	}
-
-	private static BitSet bitsetForLifecycles(Lifecycle[] lifecycles) {
-		if (lifecycles == null || lifecycles.length == 0) return null;
-		BitSet bs = new BitSet();
-		for (Lifecycle lc : lifecycles) {
-			bs.set(lc.ordinal());
-		}
-		return bs;
-	}
-
-	private static BitSet bitsetForKinds(SpanKind[] kinds) {
-		if (kinds == null || kinds.length == 0) return null;
-		BitSet bs = new BitSet();
-		for (SpanKind k : kinds) {
-			SpanKind kk = (k == null ? SpanKind.INTERNAL : k);
-			bs.set(kk.ordinal());
-		}
-		return bs;
-	}
-
-	private static String firstNonBlank(String a, String b) {
-		if (!isBlank(a)) return a;
-		return isBlank(b) ? "" : b;
-	}
-
-	private static boolean isBlank(String s) {
-		return s == null || s.isBlank();
+	private static String strOrBlank(Object v) {
+		return v == null ? "" : String.valueOf(v);
 	}
 }
