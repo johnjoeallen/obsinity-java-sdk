@@ -11,13 +11,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
 import io.opentelemetry.api.trace.SpanKind;
-
 import com.obsinity.telemetry.annotations.BindEventThrowable;
 import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.Flow;
@@ -28,7 +26,6 @@ import com.obsinity.telemetry.annotations.OnFlowNotMatched;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
 import com.obsinity.telemetry.annotations.OnOutcome;
 import com.obsinity.telemetry.annotations.Outcome;
-
 import com.obsinity.telemetry.dispatch.HandlerGroup;
 import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
 import com.obsinity.telemetry.model.Lifecycle;
@@ -41,11 +38,9 @@ import com.obsinity.telemetry.processor.TelemetryProcessor;
 import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 
-@SpringBootTest(
-	classes = TelemetryErrorWildcardCoverageTest.CoverageConfig.class,
-	webEnvironment = SpringBootTest.WebEnvironment.NONE,
-	properties = {"spring.main.web-application-type=none"}
-)
+@TelemetryBootSuite(
+		classes = TelemetryErrorWildcardCoverageTest.CoverageConfig.class,
+		properties = "spring.main.web-application-type=none")
 class TelemetryErrorWildcardCoverageTest {
 
 	@Configuration(proxyBeanMethods = false)
@@ -89,14 +84,14 @@ class TelemetryErrorWildcardCoverageTest {
 
 		@Bean
 		TelemetryProcessor telemetryProcessor(
-			TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
+				TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
 			return new TelemetryProcessor(binder, support, bus) {
 				@Override
 				protected OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
 					return new OAttributes(Map.of(
-						"test.flow", opts.name(),
-						"declaring.class", pjp.getSignature().getDeclaringTypeName(),
-						"declaring.method", pjp.getSignature().getName()));
+							"test.flow", opts.name(),
+							"declaring.class", pjp.getSignature().getDeclaringTypeName(),
+							"declaring.method", pjp.getSignature().getName()));
 				}
 			};
 		}
@@ -106,12 +101,21 @@ class TelemetryErrorWildcardCoverageTest {
 			return new TelemetryAspect(p);
 		}
 
-		@Bean ErrFlows flows(TelemetryContext ctx) { return new ErrFlows(ctx); }
+		@Bean
+		ErrFlows flows(TelemetryContext ctx) {
+			return new ErrFlows(ctx);
+		}
 
 		// Global fallback component in the new model
-		@Bean UnmatchedReceiver unmatchedReceiver() { return new UnmatchedReceiver(); }
+		@Bean
+		UnmatchedReceiver unmatchedReceiver() {
+			return new UnmatchedReceiver();
+		}
 
-		@Bean NormalReceivers normalReceivers() { return new NormalReceivers(); }
+		@Bean
+		NormalReceivers normalReceivers() {
+			return new NormalReceivers();
+		}
 	}
 
 	/* ------------ App under test ------------ */
@@ -119,22 +123,30 @@ class TelemetryErrorWildcardCoverageTest {
 	@Kind(SpanKind.SERVER)
 	static class ErrFlows {
 		private final TelemetryContext telemetry;
-		ErrFlows(TelemetryContext telemetry) { this.telemetry = telemetry; }
+
+		ErrFlows(TelemetryContext telemetry) {
+			this.telemetry = telemetry;
+		}
 
 		@Flow(name = "err.alpha")
-		public void alpha() { throw new IllegalArgumentException("alpha-fail"); }
+		public void alpha() {
+			throw new IllegalArgumentException("alpha-fail");
+		}
 
 		@Flow(name = "err.beta")
-		public void beta() { throw new IllegalStateException("beta-fail"); }
+		public void beta() {
+			throw new IllegalStateException("beta-fail");
+		}
 
 		@Flow(name = "ok.gamma")
-		public void gamma() { /* no-op */ }
+		public void gamma() {
+			/* no-op */
+		}
 	}
 
 	/**
-	 * Global fallbacks (new model):
-	 * - Annotate the class with @GlobalFlowFallback.
-	 * - Methods use @OnFlowNotMatched. No lifecycle element → use param.
+	 * Global fallbacks (new model): - Annotate the class with @GlobalFlowFallback. - Methods use @OnFlowNotMatched. No
+	 * lifecycle element → use param.
 	 */
 	@GlobalFlowFallback
 	static class UnmatchedReceiver {
@@ -159,9 +171,8 @@ class TelemetryErrorWildcardCoverageTest {
 	}
 
 	/**
-	 * Named handler for ok.gamma:
-	 *  - Success-specific handler claims (FLOW_FINISHED, SUCCESS).
-	 *  - Completed handler narrowed to FAILURE to avoid slot overlap by new rules.
+	 * Named handler for ok.gamma: - Success-specific handler claims (FLOW_FINISHED, SUCCESS). - Completed handler
+	 * narrowed to FAILURE to avoid slot overlap by new rules.
 	 */
 	@EventReceiver
 	static class NormalReceivers {
@@ -173,42 +184,50 @@ class TelemetryErrorWildcardCoverageTest {
 		}
 
 		@OnFlowCompleted(name = "ok.gamma")
-		@OnOutcome(Outcome.FAILURE) // <-- narrow to FAILURE so it doesn't collide with the success handler
+		@OnOutcome(Outcome.FAILURE) // avoid SUCCESS-slot collision with onGamma
 		public void onGammaCompleted(TelemetryHolder h) {
 			// no-op
 		}
 	}
 
-	@Autowired ErrFlows flows;
-	@Autowired UnmatchedReceiver unmatched;
-	@Autowired NormalReceivers normals;
+	@Autowired
+	ErrFlows flows;
+
+	@Autowired
+	UnmatchedReceiver unmatched;
+
+	@Autowired
+	NormalReceivers normals;
 
 	@Test
 	@DisplayName("Global fallback fires for unmatched error flows; finish fallback suppressed by named success")
 	void globalFallbacks_workAsExpected_underNewAPI() {
 		// err.alpha → exception path
 		assertThatThrownBy(() -> flows.alpha())
-			.isInstanceOf(IllegalArgumentException.class)
-			.hasMessageContaining("alpha-fail");
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("alpha-fail");
 
 		// err.beta → exception path
 		assertThatThrownBy(() -> flows.beta())
-			.isInstanceOf(IllegalStateException.class)
-			.hasMessageContaining("beta-fail");
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessageContaining("beta-fail");
 
 		// ok.gamma → normal path with a named SUCCESS handler
 		flows.gamma();
 
 		// Global unmatched at finish should capture only the error flows
-		assertThat(unmatched.notMatchedAtFinish.stream().map(TelemetryHolder::name).toList())
-			.containsExactlyInAnyOrder("err.alpha", "err.beta");
+		assertThat(unmatched.notMatchedAtFinish.stream()
+						.map(TelemetryHolder::name)
+						.toList())
+				.containsExactlyInAnyOrder("err.alpha", "err.beta");
 
 		// Named success handler observed ok.gamma
-		assertThat(normals.normals.stream().map(TelemetryHolder::name).toList())
-			.contains("ok.gamma");
+		assertThat(normals.normals.stream().map(TelemetryHolder::name).toList()).contains("ok.gamma");
 
 		// The all-phases unmatched saw both error flows at least once
-		assertThat(unmatched.anyNotMatchedAllPhases.stream().map(TelemetryHolder::name).toList())
-			.contains("err.alpha", "err.beta");
+		assertThat(unmatched.anyNotMatchedAllPhases.stream()
+						.map(TelemetryHolder::name)
+						.toList())
+				.contains("err.alpha", "err.beta");
 	}
 }

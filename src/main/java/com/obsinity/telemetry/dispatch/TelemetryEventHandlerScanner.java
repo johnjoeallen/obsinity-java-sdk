@@ -1,11 +1,19 @@
-// src/main/java/com/obsinity/telemetry/dispatch/TelemetryEventHandlerScanner.java
 package com.obsinity.telemetry.dispatch;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.BitSet;
+import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.aop.support.AopUtils;
@@ -17,49 +25,41 @@ import org.springframework.core.annotation.MergedAnnotation;
 import org.springframework.core.annotation.MergedAnnotations;
 
 import io.opentelemetry.api.trace.SpanKind;
-
 import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.GlobalFlowFallback;
 import com.obsinity.telemetry.annotations.OnEventLifecycle;
 import com.obsinity.telemetry.annotations.OnEventScope;
-import com.obsinity.telemetry.annotations.OnFlowStarted;
 import com.obsinity.telemetry.annotations.OnFlowCompleted;
 import com.obsinity.telemetry.annotations.OnFlowFailure;
 import com.obsinity.telemetry.annotations.OnFlowNotMatched;
+import com.obsinity.telemetry.annotations.OnFlowStarted;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
 import com.obsinity.telemetry.annotations.OnOutcome;
 import com.obsinity.telemetry.annotations.Outcome;
-
 import com.obsinity.telemetry.annotations.PullAllContextValues;
 import com.obsinity.telemetry.annotations.PullAttribute;
 import com.obsinity.telemetry.annotations.PullContextValue;
-
 import com.obsinity.telemetry.model.Lifecycle;
 import com.obsinity.telemetry.model.TelemetryHolder;
 import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 
 /**
- * Scans Spring beans annotated with {@link EventReceiver} (or {@link GlobalFlowFallback})
- * and produces a registry of {@link HandlerGroup}s for flow-centric dispatch.
+ * Scans Spring beans annotated with {@link EventReceiver} (or {@link GlobalFlowFallback}) and produces a registry of
+ * {@link HandlerGroup}s for flow-centric dispatch.
  *
- * Component filters:
- *   - {@code @OnEventScope} (repeatable): prefix filter (OR across values)
- *   - {@code @OnEventLifecycle} (repeatable): lifecycle filter (OR across values)
+ * <p>Component filters: - {@code @OnEventScope} (repeatable): prefix filter (OR across values) -
+ * {@code @OnEventLifecycle} (repeatable): lifecycle filter (OR across values)
  *
- * Handler semantics:
- *   - @OnFlowStarted(name)   -> phase=FLOW_STARTED only (no outcome). If @OnEventLifecycle present, must include FLOW_STARTED.
- *   - @OnFlowSuccess(name)   -> (FLOW_FINISHED, SUCCESS). If @OnEventLifecycle present, must include FLOW_FINISHED.
- *   - @OnFlowFailure(name)   -> (FLOW_FINISHED, FAILURE). If @OnEventLifecycle present, must include FLOW_FINISHED.
- *   - @OnFlowCompleted(name) -> lifecycle inferred from parameters:
- *         * List<TelemetryHolder> param  -> phase=ROOT_FLOW_FINISHED
- *         * TelemetryHolder param only   -> phase=FLOW_FINISHED
- *         * both/none                    -> error
- *       Outcomes from @OnOutcome (default = both SUCCESS & FAILURE).
- *       If method also declares @OnEventLifecycle, it must include the inferred phase.
- *   - @OnFlowNotMatched      -> component/global unmatched; lifecycle[] may be specified on the annotation
+ * <p>Handler semantics: - @OnFlowStarted(name) -> phase=FLOW_STARTED only (no outcome). If @OnEventLifecycle present,
+ * must include FLOW_STARTED. - @OnFlowSuccess(name) -> (FLOW_FINISHED, SUCCESS). If @OnEventLifecycle present, must
+ * include FLOW_FINISHED. - @OnFlowFailure(name) -> (FLOW_FINISHED, FAILURE). If @OnEventLifecycle present, must include
+ * FLOW_FINISHED. - @OnFlowCompleted(name) -> lifecycle inferred from parameters: * List<TelemetryHolder> param ->
+ * phase=ROOT_FLOW_FINISHED * TelemetryHolder param only -> phase=FLOW_FINISHED * both/none -> error Outcomes
+ * from @OnOutcome (default = both SUCCESS & FAILURE). If method also declares @OnEventLifecycle, it must include the
+ * inferred phase. - @OnFlowNotMatched -> component/global unmatched; lifecycle[] may be specified on the annotation
  *
- * Batch binding:
- *   - Methods declaring a parameter of type List<TelemetryHolder> are valid only for ROOT_FLOW_FINISHED.
+ * <p>Batch binding: - Methods declaring a parameter of type List<TelemetryHolder> are valid only for
+ * ROOT_FLOW_FINISHED.
  */
 @Configuration
 public class TelemetryEventHandlerScanner {
@@ -90,29 +90,28 @@ public class TelemetryEventHandlerScanner {
 
 			// Component scope: prefixes + lifecycles
 			List<String> prefixes = readRepeatable(userClass, OnEventScope.class).stream()
-				.map(ann -> {
-					Object v = AnnotationUtils.getValue(ann, "value");
-					if (v == null || String.valueOf(v).isBlank()) {
-						v = AnnotationUtils.getValue(ann, "prefix");
-					}
-					return (v == null) ? "" : String.valueOf(v);
-				})
-				.filter(s -> s != null && !s.isBlank())
-				.toList();
+					.map(ann -> {
+						Object v = AnnotationUtils.getValue(ann, "value");
+						if (v == null || String.valueOf(v).isBlank()) {
+							v = AnnotationUtils.getValue(ann, "prefix");
+						}
+						return (v == null) ? "" : String.valueOf(v);
+					})
+					.filter(s -> s != null && !s.isBlank())
+					.toList();
 
 			Set<Lifecycle> lifecycleSet = readRepeatable(userClass, OnEventLifecycle.class).stream()
-				.flatMap(a -> {
-					Object v = AnnotationUtils.getValue(a, "value");
-					if (v instanceof Lifecycle[] arr) return Arrays.stream(arr);
-					if (v instanceof Lifecycle lc) return Arrays.stream(new Lifecycle[]{lc});
-					return Arrays.<Lifecycle>stream(new Lifecycle[0]);
-				})
-				.collect(Collectors.toCollection(LinkedHashSet::new));
+					.flatMap(a -> {
+						Object v = AnnotationUtils.getValue(a, "value");
+						if (v instanceof Lifecycle[] arr) return Arrays.stream(arr);
+						if (v instanceof Lifecycle lc) return Arrays.stream(new Lifecycle[] {lc});
+						return Arrays.<Lifecycle>stream(new Lifecycle[0]);
+					})
+					.collect(Collectors.toCollection(LinkedHashSet::new));
 
 			HandlerGroup.Scope scope = HandlerGroup.Scope.of(
-				prefixes.toArray(String[]::new),
-				lifecycleSet.isEmpty() ? null : lifecycleSet.toArray(new Lifecycle[0])
-			);
+					prefixes.toArray(String[]::new),
+					lifecycleSet.isEmpty() ? null : lifecycleSet.toArray(new Lifecycle[0]));
 
 			HandlerGroup group = new HandlerGroup(componentName, scope);
 
@@ -163,15 +162,15 @@ public class TelemetryEventHandlerScanner {
 
 			// ---------- Component/global not matched ----------
 			for (Method m : methodsAnnotated(userClass, OnFlowNotMatched.class)) {
-				validateBatchParamIfPresent(userClass, m,
-					new Lifecycle[]{Lifecycle.ROOT_FLOW_FINISHED}, false, "@OnFlowNotMatched");
+				validateBatchParamIfPresent(
+						userClass, m, new Lifecycle[] {Lifecycle.ROOT_FLOW_FINISHED}, false, "@OnFlowNotMatched");
 
 				Handler h = buildHandler(bean, userClass, m, null);
 				// @OnFlowNotMatched may carry lifecycle[]; if absent, register for all phases
 				Lifecycle[] phases = readLifecycleArray(m, OnFlowNotMatched.class);
 				List<Lifecycle> toRegister = (phases == null || phases.length == 0)
-					? Arrays.asList(Lifecycle.values())
-					: Arrays.asList(phases);
+						? Arrays.asList(Lifecycle.values())
+						: Arrays.asList(phases);
 
 				for (Lifecycle p : toRegister) {
 					if (isGlobalFallback) {
@@ -191,19 +190,19 @@ public class TelemetryEventHandlerScanner {
 	}
 
 	/* =========================
-	   Registration helpers
-	   ========================= */
+	Registration helpers
+	========================= */
 
 	private void registerStartedPhase(
-		HandlerGroup group,
-		Object bean,
-		Class<?> userClass,
-		Method m,
-		String exactName,
-		Map<String, List<String>> dupGuard
-	) {
+			HandlerGroup group,
+			Object bean,
+			Class<?> userClass,
+			Method m,
+			String exactName,
+			Map<String, List<String>> dupGuard) {
 		// Validate batch param constraints (only ROOT_FLOW_FINISHED allows List<TelemetryHolder>)
-		validateBatchParamIfPresent(userClass, m, new Lifecycle[]{Lifecycle.ROOT_FLOW_FINISHED}, false, "flow handler");
+		validateBatchParamIfPresent(
+				userClass, m, new Lifecycle[] {Lifecycle.ROOT_FLOW_FINISHED}, false, "flow handler");
 
 		Handler h = buildHandler(bean, userClass, m, exactName);
 		// Use group's "completed" bucket for FLOW_STARTED only (acts as no-outcome list)
@@ -213,17 +212,17 @@ public class TelemetryEventHandlerScanner {
 	}
 
 	private void registerOutcome(
-		HandlerGroup group,
-		Object bean,
-		Class<?> userClass,
-		Method m,
-		String exactName,
-		Lifecycle phase,
-		Outcome outcome,
-		Map<String, List<String>> dupGuard
-	) {
+			HandlerGroup group,
+			Object bean,
+			Class<?> userClass,
+			Method m,
+			String exactName,
+			Lifecycle phase,
+			Outcome outcome,
+			Map<String, List<String>> dupGuard) {
 		// Validate batch param constraints (only ROOT_FLOW_FINISHED allows List<TelemetryHolder>)
-		validateBatchParamIfPresent(userClass, m, new Lifecycle[]{Lifecycle.ROOT_FLOW_FINISHED}, false, "flow handler");
+		validateBatchParamIfPresent(
+				userClass, m, new Lifecycle[] {Lifecycle.ROOT_FLOW_FINISHED}, false, "flow handler");
 
 		Handler h = buildHandler(bean, userClass, m, exactName);
 
@@ -241,12 +240,7 @@ public class TelemetryEventHandlerScanner {
 		}
 	}
 
-	private Handler buildHandler(
-		Object bean,
-		Class<?> userClass,
-		Method m,
-		String exactNameOrNull
-	) {
+	private Handler buildHandler(Object bean, Class<?> userClass, Method m, String exactNameOrNull) {
 		BitSet lifecycleMask = null; // not used in flow-centric routing
 		BitSet kindMask = null;
 
@@ -256,35 +250,32 @@ public class TelemetryEventHandlerScanner {
 		// Detect a bound throwable type (prefer @BindEventThrowable, else any Throwable param)
 		Class<? extends Throwable> boundThrowable = detectBoundThrowableType(m);
 		List<Class<? extends Throwable>> throwableTypes =
-			(boundThrowable == null) ? List.of() : List.of(boundThrowable);
+				(boundThrowable == null) ? List.of() : List.of(boundThrowable);
 
 		return new Handler(
-			bean,
-			m,
-			exactNameOrNull,
-			lifecycleMask,
-			kindMask,
-			throwableTypes, // used for failure specificity
-			true,           // includeSubclasses
-			null,           // messagePattern
-			null,           // causeTypeOrNull
-			binders,
-			Set.of(),       // required attributes
-			id
-		);
+				bean,
+				m,
+				exactNameOrNull,
+				lifecycleMask,
+				kindMask,
+				throwableTypes, // used for failure specificity
+				true, // includeSubclasses
+				null, // messagePattern
+				null, // causeTypeOrNull
+				binders,
+				Set.of(), // required attributes
+				id);
 	}
 
 	/* =========================
-	   Param/lifecycle inference & validation
-	   ========================= */
+	Param/lifecycle inference & validation
+	========================= */
 
 	private record InferredLifecycle(Lifecycle phase, boolean usesBatch) {}
 
 	/**
-	 * Infer lifecycle for @OnFlowCompleted from method parameters:
-	 *  - List<TelemetryHolder> -> ROOT_FLOW_FINISHED
-	 *  - TelemetryHolder (and no List<TelemetryHolder>) -> FLOW_FINISHED
-	 *  - Otherwise or both present -> error
+	 * Infer lifecycle for @OnFlowCompleted from method parameters: - List<TelemetryHolder> -> ROOT_FLOW_FINISHED -
+	 * TelemetryHolder (and no List<TelemetryHolder>) -> FLOW_FINISHED - Otherwise or both present -> error
 	 */
 	private InferredLifecycle inferLifecycleFromParams(Class<?> userClass, Method m) {
 		boolean hasHolder = false;
@@ -309,7 +300,7 @@ public class TelemetryEventHandlerScanner {
 
 		if (hasBatch && hasHolder) {
 			throw new IllegalStateException(errPrefix(userClass, m)
-				+ "@OnFlowCompleted cannot declare BOTH TelemetryHolder and List<TelemetryHolder> parameters");
+					+ "@OnFlowCompleted cannot declare BOTH TelemetryHolder and List<TelemetryHolder> parameters");
 		}
 		if (hasBatch) {
 			return new InferredLifecycle(Lifecycle.ROOT_FLOW_FINISHED, true);
@@ -318,13 +309,12 @@ public class TelemetryEventHandlerScanner {
 			return new InferredLifecycle(Lifecycle.FLOW_FINISHED, false);
 		}
 
-		throw new IllegalStateException(errPrefix(userClass, m)
-			+ "@OnFlowCompleted must declare either TelemetryHolder OR List<TelemetryHolder> to determine lifecycle");
+		throw new IllegalStateException(
+				errPrefix(userClass, m)
+						+ "@OnFlowCompleted must declare either TelemetryHolder OR List<TelemetryHolder> to determine lifecycle");
 	}
 
-	/**
-	 * If method carries @OnEventLifecycle, ensure it includes the inferred phase (for @OnFlowCompleted).
-	 */
+	/** If method carries @OnEventLifecycle, ensure it includes the inferred phase (for @OnFlowCompleted). */
 	private void validateMethodLifecycleAnnotationMatches(Class<?> userClass, Method m, Lifecycle inferred) {
 		List<OnEventLifecycle> anns = readRepeatable(m, OnEventLifecycle.class);
 		if (anns.isEmpty()) return;
@@ -337,16 +327,17 @@ public class TelemetryEventHandlerScanner {
 		}
 		if (!declared.contains(inferred)) {
 			throw new IllegalStateException(errPrefix(userClass, m)
-				+ "@OnEventLifecycle must include the inferred lifecycle " + inferred
-				+ " for @OnFlowCompleted based on parameters");
+					+ "@OnEventLifecycle must include the inferred lifecycle " + inferred
+					+ " for @OnFlowCompleted based on parameters");
 		}
 	}
 
 	/**
-	 * For fixed-phase handlers (@OnFlowStarted/@OnFlowSuccess/@OnFlowFailure), if method has @OnEventLifecycle,
-	 * ensure it includes the required phase.
+	 * For fixed-phase handlers (@OnFlowStarted/@OnFlowSuccess/@OnFlowFailure), if method has @OnEventLifecycle, ensure
+	 * it includes the required phase.
 	 */
-	private void validateMethodLifecycleAnnotationIncludes(Class<?> userClass, Method m, Lifecycle required, String where) {
+	private void validateMethodLifecycleAnnotationIncludes(
+			Class<?> userClass, Method m, Lifecycle required, String where) {
 		List<OnEventLifecycle> anns = readRepeatable(m, OnEventLifecycle.class);
 		if (anns.isEmpty()) return;
 
@@ -357,8 +348,8 @@ public class TelemetryEventHandlerScanner {
 			else if (v instanceof Lifecycle lc) declared.add(lc);
 		}
 		if (!declared.contains(required)) {
-			throw new IllegalStateException(errPrefix(userClass, m)
-				+ where + " has @OnEventLifecycle that does not include required lifecycle " + required);
+			throw new IllegalStateException(errPrefix(userClass, m) + where
+					+ " has @OnEventLifecycle that does not include required lifecycle " + required);
 		}
 	}
 
@@ -377,8 +368,8 @@ public class TelemetryEventHandlerScanner {
 	}
 
 	/* =========================
-	   Param binding (annotation-aware)
-	   ========================= */
+	Param binding (annotation-aware)
+	========================= */
 
 	private List<ParamBinder> buildParamBinders(Method m) {
 		Class<?>[] pts = m.getParameterTypes();
@@ -420,7 +411,7 @@ public class TelemetryEventHandlerScanner {
 					b = (holder, phase, error) -> error;
 				} else if (SpanKind.class.isAssignableFrom(pt)) {
 					b = (holder, phase, error) ->
-						(holder == null ? null : (holder.kind() == null ? SpanKind.INTERNAL : holder.kind()));
+							(holder == null ? null : (holder.kind() == null ? SpanKind.INTERNAL : holder.kind()));
 				} else {
 					b = (holder, phase, error) -> null;
 				}
@@ -493,8 +484,8 @@ public class TelemetryEventHandlerScanner {
 	}
 
 	/* =========================
-	   Validation helpers
-	   ========================= */
+	Validation helpers
+	========================= */
 
 	private static void validateNonBlank(Class<?> userClass, Method m, String field, String value) {
 		if (value == null || value.isBlank()) {
@@ -510,28 +501,31 @@ public class TelemetryEventHandlerScanner {
 			}
 		}
 		if (!errors.isEmpty()) {
-			throw new IllegalStateException("Invalid handler configuration for component "
-				+ userClass.getSimpleName() + ": exact duplicate handler registrations -> " + errors);
+			throw new IllegalStateException("Invalid handler configuration for component " + userClass.getSimpleName()
+					+ ": exact duplicate handler registrations -> " + errors);
 		}
 	}
 
 	private static void validateBatchParamIfPresent(
-		Class<?> userClass, Method m, Lifecycle[] lifecycles, boolean unused, String where) {
+			Class<?> userClass, Method m, Lifecycle[] lifecycles, boolean unused, String where) {
 		if (!declaresRootBatchParam(m)) return;
 
 		boolean hasRoot = false;
 		if (lifecycles != null && lifecycles.length > 0) {
 			for (Lifecycle lc : lifecycles) {
-				if (lc == Lifecycle.ROOT_FLOW_FINISHED) { hasRoot = true; break; }
+				if (lc == Lifecycle.ROOT_FLOW_FINISHED) {
+					hasRoot = true;
+					break;
+				}
 			}
 		}
 		if (!hasRoot) {
 			throw new IllegalStateException(errPrefix(userClass, m) + where
-				+ " declares List<TelemetryHolder> but does not include lifecycle=ROOT_FLOW_FINISHED");
+					+ " declares List<TelemetryHolder> but does not include lifecycle=ROOT_FLOW_FINISHED");
 		}
 		if (countRootBatchParams(m) > 1) {
-			throw new IllegalStateException(errPrefix(userClass, m)
-				+ "at most one List<TelemetryHolder> parameter is allowed");
+			throw new IllegalStateException(
+					errPrefix(userClass, m) + "at most one List<TelemetryHolder> parameter is allowed");
 		}
 	}
 
@@ -543,21 +537,26 @@ public class TelemetryEventHandlerScanner {
 		for (Annotation a : anns) {
 			if (a instanceof PullAttribute) pulls++;
 			if (a instanceof PullContextValue) pulls++;
-			if (a instanceof PullAllContextValues) { pulls++; hasAllCtx = true; }
+			if (a instanceof PullAllContextValues) {
+				pulls++;
+				hasAllCtx = true;
+			}
 		}
 
 		if (pulls > 1) {
 			throw new IllegalStateException(String.format(
-				"%sParameter %d mixes multiple Pull* annotations on method %s#%s",
-				errPrefix(m.getDeclaringClass(), m),
-				paramIndex, m.getDeclaringClass().getSimpleName(), m.getName()));
+					"%sParameter %d mixes multiple Pull* annotations on method %s#%s",
+					errPrefix(m.getDeclaringClass(), m),
+					paramIndex,
+					m.getDeclaringClass().getSimpleName(),
+					m.getName()));
 		}
 
 		if (hasAllCtx) {
 			Class<?> pt = m.getParameterTypes()[paramIndex];
 			if (!Map.class.isAssignableFrom(pt)) {
 				throw new IllegalStateException(errPrefix(m.getDeclaringClass(), m)
-					+ "@PullAllContextValues requires parameter type assignable to Map");
+						+ "@PullAllContextValues requires parameter type assignable to Map");
 			}
 		}
 	}
@@ -567,13 +566,13 @@ public class TelemetryEventHandlerScanner {
 	}
 
 	/* =========================
-	   Utils
-	   ========================= */
+	Utils
+	========================= */
 
 	private static List<Method> methodsAnnotated(Class<?> c, Class<? extends Annotation> ann) {
 		return Arrays.stream(c.getMethods())
-			.filter(m -> m.isAnnotationPresent(ann))
-			.collect(Collectors.toList());
+				.filter(m -> m.isAnnotationPresent(ann))
+				.collect(Collectors.toList());
 	}
 
 	private static String readAliasedName(Method m, Class<? extends Annotation> annotationType) {
@@ -602,7 +601,8 @@ public class TelemetryEventHandlerScanner {
 				// Spring API: use getValue(name, type) -> Optional<T>
 				java.util.Optional<Lifecycle[]> opt = ma.getValue("lifecycle", Lifecycle[].class);
 				if (opt.isPresent()) return opt.get();
-			} catch (Exception ignored) { }
+			} catch (Exception ignored) {
+			}
 		}
 		Annotation ann = AnnotationUtils.findAnnotation(m, annotationType);
 		if (ann != null) {
@@ -613,11 +613,15 @@ public class TelemetryEventHandlerScanner {
 	}
 
 	private static <A extends Annotation> List<A> readRepeatable(Class<?> element, Class<A> type) {
-		return MergedAnnotations.from(element).stream(type).map(MergedAnnotation::synthesize).toList();
+		return MergedAnnotations.from(element).stream(type)
+				.map(MergedAnnotation::synthesize)
+				.toList();
 	}
 
 	private static <A extends Annotation> List<A> readRepeatable(Method element, Class<A> type) {
-		return MergedAnnotations.from(element).stream(type).map(MergedAnnotation::synthesize).toList();
+		return MergedAnnotations.from(element).stream(type)
+				.map(MergedAnnotation::synthesize)
+				.toList();
 	}
 
 	private static boolean declaresRootBatchParam(Method m) {
@@ -656,8 +660,8 @@ public class TelemetryEventHandlerScanner {
 	}
 
 	/* =========================
-	   Throwable binding discovery
-	   ========================= */
+	Throwable binding discovery
+	========================= */
 
 	@SuppressWarnings("unchecked")
 	private static Class<? extends Throwable> detectBoundThrowableType(Method m) {
@@ -669,8 +673,10 @@ public class TelemetryEventHandlerScanner {
 			boolean hasBind = false;
 			for (Annotation a : anns[i]) {
 				// Avoid a hard dependency if the annotation class isn’t on the compile path here
-				if ("com.obsinity.telemetry.annotations.BindEventThrowable".equals(a.annotationType().getName())) {
-					hasBind = true; break;
+				if ("com.obsinity.telemetry.annotations.BindEventThrowable"
+						.equals(a.annotationType().getName())) {
+					hasBind = true;
+					break;
 				}
 			}
 			if (hasBind && Throwable.class.isAssignableFrom(pts[i])) {

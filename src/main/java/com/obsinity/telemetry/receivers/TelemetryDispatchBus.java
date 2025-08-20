@@ -2,7 +2,6 @@ package com.obsinity.telemetry.receivers;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -45,11 +44,11 @@ public class TelemetryDispatchBus {
 	 */
 	public void rootFlowFinished(List<TelemetryHolder> completed) {
 		log.debug(
-			"BUS: rootFlowFinished batch size={} names={}",
-			(completed == null ? 0 : completed.size()),
-			(completed == null)
-				? "[]"
-				: completed.stream().map(TelemetryHolder::name).toList());
+				"BUS: rootFlowFinished batch size={} names={}",
+				(completed == null ? 0 : completed.size()),
+				(completed == null)
+						? "[]"
+						: completed.stream().map(TelemetryHolder::name).toList());
 
 		if (completed == null || completed.isEmpty()) return;
 
@@ -81,19 +80,19 @@ public class TelemetryDispatchBus {
 		final boolean failed = (error != null);
 
 		log.debug(
-			"BUS: dispatch phase={} name='{}' failed={} isStep={} traceId={} spanId={} attrKeys={} ctxKeys={} groups={}",
-			phase,
-			eventName,
-			failed,
-			bool(holder.isStep()),
-			safe(holder.traceId()),
-			safe(holder.spanId()),
-			attrKeys(holder),
-			ctxKeys(holder),
-			(groups == null ? 0 : groups.size()));
+				"BUS: dispatch phase={} name='{}' failed={} isStep={} traceId={} spanId={} attrKeys={} ctxKeys={} groups={}",
+				phase,
+				eventName,
+				failed,
+				bool(holder.isStep()),
+				safe(holder.traceId()),
+				safe(holder.spanId()),
+				attrKeys(holder),
+				ctxKeys(holder),
+				(groups == null ? 0 : groups.size()));
 
-		boolean anyMatched = false;             // flips when any named handler matched
-		boolean anyComponentUnmatched = false;  // flips when a component-level unmatched ran
+		boolean anyMatched = false; // flips when any named handler matched
+		boolean anyComponentUnmatched = false; // flips when a component-level unmatched ran
 		boolean anyGroupEligibleForPhase = false; // lifecycle+scope+outcome presence
 
 		// Per-component pass: group-level gates -> named handlers -> component-unmatched
@@ -121,7 +120,12 @@ public class TelemetryDispatchBus {
 			// 3) Outcome availability (fast check to avoid useless handler probes)
 			try {
 				if (!g.hasAnyHandlersFor(phase, failed)) {
-					log.debug("BUS: component[{}]='{}' has no handlers for outcome={}, phase={}", i, componentName, failed, phase);
+					log.debug(
+							"BUS: component[{}]='{}' has no handlers for outcome={}, phase={}",
+							i,
+							componentName,
+							failed,
+							phase);
 					continue;
 				}
 			} catch (NoSuchMethodError | Exception ignored) {
@@ -135,19 +139,20 @@ public class TelemetryDispatchBus {
 			log.debug("BUS: component[{}]='{}' tier found?={}", i, componentName, chosen != null);
 			if (chosen != null) {
 				log.debug(
-					"BUS: component[{}]='{}' tier bucket sizes: completed={} success={} failure={}",
-					i,
-					componentName,
-					(chosen.completed == null ? 0 : chosen.completed.size()),
-					(chosen.success == null ? 0 : chosen.success.size()),
-					(chosen.failure == null ? 0 : chosen.failure.size()));
+						"BUS: component[{}]='{}' tier bucket sizes: completed={} success={} failure={}",
+						i,
+						componentName,
+						(chosen.completed == null ? 0 : chosen.completed.size()),
+						(chosen.success == null ? 0 : chosen.success.size()),
+						(chosen.failure == null ? 0 : chosen.failure.size()));
 			}
 
 			if (chosen != null) {
 				boolean matchedHere = false;
 
 				// completed (both outcomes) first
-				if (hasAnyEligible(chosen.completed, holder, phase, failed, error, i, componentName, "tier.completed")) {
+				if (hasAnyEligible(
+						chosen.completed, holder, phase, failed, error, i, componentName, "tier.completed")) {
 					runAll(chosen.completed, holder, phase, failed, error, i, componentName, "tier.completed");
 					matchedHere = true;
 				}
@@ -156,7 +161,7 @@ public class TelemetryDispatchBus {
 					// Most-specific failure selection
 					if (chosen.failure != null && !chosen.failure.isEmpty()) {
 						List<Handler> selected = selectMostSpecificFailureHandlers(
-							chosen.failure, holder, phase, error, i, componentName);
+								chosen.failure, holder, phase, error, i, componentName);
 						if (!selected.isEmpty()) {
 							runAll(selected, holder, phase, true, error, i, componentName, "tier.failure[selected]");
 							matchedHere = true;
@@ -166,8 +171,10 @@ public class TelemetryDispatchBus {
 						boolean invoked = invokeComponentUnmatched(g, phase, holder, true, error, i, componentName);
 						anyComponentUnmatched |= invoked;
 						log.debug(
-							"BUS: component[{}]='{}' no eligible failure handlers -> component-unmatched invoked={}",
-							i, componentName, invoked);
+								"BUS: component[{}]='{}' no eligible failure handlers -> component-unmatched invoked={}",
+								i,
+								componentName,
+								invoked);
 					}
 				} else {
 					if (hasAnyEligible(chosen.success, holder, phase, false, null, i, componentName, "tier.success")) {
@@ -178,8 +185,10 @@ public class TelemetryDispatchBus {
 						boolean invoked = invokeComponentUnmatched(g, phase, holder, false, null, i, componentName);
 						anyComponentUnmatched |= invoked;
 						log.debug(
-							"BUS: component[{}]='{}' no eligible success handlers -> component-unmatched invoked={}",
-							i, componentName, invoked);
+								"BUS: component[{}]='{}' no eligible success handlers -> component-unmatched invoked={}",
+								i,
+								componentName,
+								invoked);
 					}
 				}
 
@@ -188,7 +197,8 @@ public class TelemetryDispatchBus {
 				// No tier -> try component-scoped unmatched for the current phase
 				boolean invoked = invokeComponentUnmatched(g, phase, holder, failed, error, i, componentName);
 				anyComponentUnmatched |= invoked;
-				log.debug("BUS: component[{}]='{}' no tier -> component-unmatched invoked={}", i, componentName, invoked);
+				log.debug(
+						"BUS: component[{}]='{}' no tier -> component-unmatched invoked={}", i, componentName, invoked);
 			}
 
 			log.debug("BUS: component[{}]='{}' end", i, componentName);
@@ -198,16 +208,18 @@ public class TelemetryDispatchBus {
 		if (!anyMatched && !anyComponentUnmatched) {
 			if (anyGroupEligibleForPhase) {
 				boolean invoked = invokeGlobalUnmatchedAcrossAllComponents(phase, holder, failed, error, eventName);
-				log.debug("BUS: global-unmatched invoked={} (no named handlers matched and no component-unmatched)", invoked);
+				log.debug(
+						"BUS: global-unmatched invoked={} (no named handlers matched and no component-unmatched)",
+						invoked);
 				if (!invoked) {
 					log.error(
-						"Unhandled {} event name='{}' phase={} traceId={} spanId={} ex={}",
-						failed ? "failure" : "success",
-						holder.name(),
-						phase,
-						safe(holder.traceId()),
-						safe(holder.spanId()),
-						String.valueOf(error));
+							"Unhandled {} event name='{}' phase={} traceId={} spanId={} ex={}",
+							failed ? "failure" : "success",
+							holder.name(),
+							phase,
+							safe(holder.traceId()),
+							safe(holder.spanId()),
+							String.valueOf(error));
 				}
 			} else {
 				// Nothing in the system declared interest in this phase/outcome/name -> suppress noise
@@ -219,13 +231,12 @@ public class TelemetryDispatchBus {
 	// ---- most-specific failure selection ----
 
 	private List<Handler> selectMostSpecificFailureHandlers(
-		List<Handler> failureHandlers,
-		TelemetryHolder holder,
-		Lifecycle phase,
-		Throwable error,
-		int componentIdx,
-		String componentName
-	) {
+			List<Handler> failureHandlers,
+			TelemetryHolder holder,
+			Lifecycle phase,
+			Throwable error,
+			int componentIdx,
+			String componentName) {
 		if (failureHandlers == null || failureHandlers.isEmpty() || error == null) return List.of();
 
 		// 1) Filter to handlers that accept
@@ -233,16 +244,19 @@ public class TelemetryDispatchBus {
 		for (Handler h : failureHandlers) {
 			boolean ok = h.accepts(phase, holder, true, error);
 			log.debug(
-				"BUS: failure-candidate [{}]='{}' accepts?={} handler={} errClass={}",
-				componentIdx, componentName, ok, safeHandlerName(h),
-				error.getClass().getName());
+					"BUS: failure-candidate [{}]='{}' accepts?={} handler={} errClass={}",
+					componentIdx,
+					componentName,
+					ok,
+					safeHandlerName(h),
+					error.getClass().getName());
 			if (ok) elig.add(h);
 		}
 		if (elig.isEmpty()) return List.of();
 
 		// 2) Partition specific vs generic
 		List<Handler> specifics = new ArrayList<>();
-		List<Handler> generics  = new ArrayList<>();
+		List<Handler> generics = new ArrayList<>();
 		for (Handler h : elig) {
 			Class<? extends Throwable> tt = firstThrowableType(h);
 			if (isGenericThrowable(tt)) generics.add(h);
@@ -266,8 +280,10 @@ public class TelemetryDispatchBus {
 					}
 				}
 			}
-			log.debug("BUS: specific failure selection winners={} bestDistance={}",
-				winners.stream().map(TelemetryDispatchBus::safeHandlerName).toList(), best);
+			log.debug(
+					"BUS: specific failure selection winners={} bestDistance={}",
+					winners.stream().map(TelemetryDispatchBus::safeHandlerName).toList(),
+					best);
 			return winners;
 		}
 
@@ -305,27 +321,27 @@ public class TelemetryDispatchBus {
 	// ---- eligibility (without invoking) ----
 
 	private boolean hasAnyEligible(
-		List<Handler> hs,
-		TelemetryHolder holder,
-		Lifecycle phase,
-		boolean failed,
-		Throwable error,
-		int componentIdx,
-		String componentName,
-		String bucketName) {
+			List<Handler> hs,
+			TelemetryHolder holder,
+			Lifecycle phase,
+			boolean failed,
+			Throwable error,
+			int componentIdx,
+			String componentName,
+			String bucketName) {
 		if (hs == null || hs.isEmpty()) return false;
 		for (Handler h : hs) {
 			boolean ok = h.accepts(phase, holder, failed, error);
 			log.debug(
-				"BUS: match-check [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
-				componentIdx,
-				componentName,
-				bucketName,
-				ok,
-				safeHandlerName(h),
-				phase,
-				holder.name(),
-				failed);
+					"BUS: match-check [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
+					componentIdx,
+					componentName,
+					bucketName,
+					ok,
+					safeHandlerName(h),
+					phase,
+					holder.name(),
+					failed);
 			if (ok) return true;
 		}
 		return false;
@@ -334,57 +350,57 @@ public class TelemetryDispatchBus {
 	// ---- invocation paths ----
 
 	private void runAll(
-		List<Handler> hs,
-		TelemetryHolder holder,
-		Lifecycle phase,
-		boolean failed,
-		Throwable error,
-		int componentIdx,
-		String componentName,
-		String bucketName) {
+			List<Handler> hs,
+			TelemetryHolder holder,
+			Lifecycle phase,
+			boolean failed,
+			Throwable error,
+			int componentIdx,
+			String componentName,
+			String bucketName) {
 		if (hs == null) return;
 		for (Handler h : hs) {
 			boolean ok = h.accepts(phase, holder, failed, error);
 			log.debug(
-				"BUS: invoke-check [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
-				componentIdx,
-				componentName,
-				bucketName,
-				ok,
-				safeHandlerName(h),
-				phase,
-				holder.name(),
-				failed);
+					"BUS: invoke-check [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
+					componentIdx,
+					componentName,
+					bucketName,
+					ok,
+					safeHandlerName(h),
+					phase,
+					holder.name(),
+					failed);
 			if (ok) safeInvoke(h, holder, phase);
 		}
 	}
 
 	/**
-	 * Component-scoped unmatched built from @OnFlowNotMatched registrations for this group only.
-	 * Returns true if any invoked.
+	 * Component-scoped unmatched built from @OnFlowNotMatched registrations for this group only. Returns true if any
+	 * invoked.
 	 */
 	private boolean invokeComponentUnmatched(
-		HandlerGroup g,
-		Lifecycle phase,
-		TelemetryHolder holder,
-		boolean failed,
-		Throwable error,
-		int componentIdx,
-		String componentName) {
+			HandlerGroup g,
+			Lifecycle phase,
+			TelemetryHolder holder,
+			boolean failed,
+			Throwable error,
+			int componentIdx,
+			String componentName) {
 		boolean invokedAny = false;
 
 		// Completed (both outcomes) first
 		for (Handler h : g.unmatched.combined(phase)) { // alias to completed
 			boolean ok = h.accepts(phase, holder, failed, error);
 			log.debug(
-				"BUS: component-unmatched [{}]='{}' [completed] accepts?={} handler={} phase={} name='{}' failed={}",
-				componentIdx,
-				componentName,
-				ok,
-				safeHandlerName(h),
-				phase,
-				holder.name(),
-				failed);
+					"BUS: component-unmatched [{}]='{}' [completed] accepts?={} handler={} phase={} name='{}' failed={}",
+					componentIdx,
+					componentName,
+					ok,
+					safeHandlerName(h),
+					phase,
+					holder.name(),
+					failed);
 			if (ok) {
 				log.debug("BUS: component-unmatched invoking handler={}", safeHandlerName(h));
 				safeInvoke(h, holder, phase);
@@ -397,15 +413,15 @@ public class TelemetryDispatchBus {
 		for (Handler h : bucket) {
 			boolean ok = h.accepts(phase, holder, failed, error);
 			log.debug(
-				"BUS: component-unmatched [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
-				componentIdx,
-				componentName,
-				modeName,
-				ok,
-				safeHandlerName(h),
-				phase,
-				holder.name(),
-				failed);
+					"BUS: component-unmatched [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
+					componentIdx,
+					componentName,
+					modeName,
+					ok,
+					safeHandlerName(h),
+					phase,
+					holder.name(),
+					failed);
 			if (ok) {
 				log.debug("BUS: component-unmatched invoking handler={}", safeHandlerName(h));
 				safeInvoke(h, holder, phase);
@@ -417,7 +433,7 @@ public class TelemetryDispatchBus {
 
 	/** Global unmatched across all components: returns true if any invoked (no phase fallback). */
 	private boolean invokeGlobalUnmatchedAcrossAllComponents(
-		Lifecycle phase, TelemetryHolder holder, boolean failed, Throwable error, String eventName) {
+			Lifecycle phase, TelemetryHolder holder, boolean failed, Throwable error, String eventName) {
 
 		boolean invoked = false;
 		for (int i = 0; i < groups.size(); i++) {
@@ -437,14 +453,14 @@ public class TelemetryDispatchBus {
 			for (Handler h : g.globalUnmatched.combined(phase)) { // alias to completed
 				boolean ok = h.accepts(phase, holder, failed, error);
 				log.debug(
-					"BUS: GLOBAL-unmatched [{}]='{}' [completed] accepts?={} handler={} phase={} name='{}' failed={}",
-					i,
-					componentName,
-					ok,
-					safeHandlerName(h),
-					phase,
-					holder.name(),
-					failed);
+						"BUS: GLOBAL-unmatched [{}]='{}' [completed] accepts?={} handler={} phase={} name='{}' failed={}",
+						i,
+						componentName,
+						ok,
+						safeHandlerName(h),
+						phase,
+						holder.name(),
+						failed);
 				if (ok) {
 					log.debug("BUS: GLOBAL-unmatched invoking handler={}", safeHandlerName(h));
 					safeInvoke(h, holder, phase);
@@ -456,15 +472,15 @@ public class TelemetryDispatchBus {
 			for (Handler h : global) {
 				boolean ok = h.accepts(phase, holder, failed, error);
 				log.debug(
-					"BUS: GLOBAL-unmatched [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
-					i,
-					componentName,
-					modeName,
-					ok,
-					safeHandlerName(h),
-					phase,
-					holder.name(),
-					failed);
+						"BUS: GLOBAL-unmatched [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
+						i,
+						componentName,
+						modeName,
+						ok,
+						safeHandlerName(h),
+						phase,
+						holder.name(),
+						failed);
 				if (ok) {
 					log.debug("BUS: GLOBAL-unmatched invoking handler={}", safeHandlerName(h));
 					safeInvoke(h, holder, phase);
@@ -481,14 +497,14 @@ public class TelemetryDispatchBus {
 			h.invoke(holder, phase);
 		} catch (Throwable t) {
 			log.error(
-				"Handler error in {} for event name='{}' phase={} traceId={} spanId={}: {}",
-				safeHandlerName(h),
-				holder.name(),
-				phase,
-				safe(holder.traceId()),
-				safe(holder.spanId()),
-				t.toString(),
-				t);
+					"Handler error in {} for event name='{}' phase={} traceId={} spanId={}: {}",
+					safeHandlerName(h),
+					holder.name(),
+					phase,
+					safe(holder.traceId()),
+					safe(holder.spanId()),
+					t.toString(),
+					t);
 		}
 	}
 

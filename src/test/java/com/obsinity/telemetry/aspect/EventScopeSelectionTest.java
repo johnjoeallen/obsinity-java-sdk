@@ -1,4 +1,3 @@
-// src/test/java/com/obsinity/telemetry/aspect/EventScopeSelectionTest.java
 package com.obsinity.telemetry.aspect;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -13,8 +12,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
@@ -29,7 +26,6 @@ import com.obsinity.telemetry.annotations.OnFlowNotMatched;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
 import com.obsinity.telemetry.annotations.OnOutcome;
 import com.obsinity.telemetry.annotations.Outcome;
-
 import com.obsinity.telemetry.dispatch.HandlerGroup;
 import com.obsinity.telemetry.dispatch.HandlerScopeValidator;
 import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
@@ -43,23 +39,23 @@ import com.obsinity.telemetry.processor.TelemetryProcessor;
 import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 
-@SpringBootTest(classes = EventScopeSelectionTest.Config.class)
+@TelemetryBootSuite(classes = EventScopeSelectionTest.Config.class)
 class EventScopeSelectionTest {
 
 	@Autowired
 	Config.Flows flows;
 
 	@Autowired
-	@Qualifier("EventScopeSelectionTest.ordersOnlyFinished") OrdersOnlyFinished ordersOnlyFinished;
+	OrdersOnlyFinished ordersOnlyFinished;
 
 	@Autowired
-	@Qualifier("EventScopeSelectionTest.ordersOrPaymentsFinished") OrdersOrPaymentsFinished ordersOrPaymentsFinished;
+	OrdersOrPaymentsFinished ordersOrPaymentsFinished;
 
 	@Autowired
-	@Qualifier("EventScopeSelectionTest.componentScopedUnmatched") ComponentScopedUnmatched componentScopedUnmatched;
+	ComponentScopedUnmatched componentScopedUnmatched;
 
 	@Autowired
-	@Qualifier("EventScopeSelectionTest.unscopedControl") UnscopedControl unscopedControl;
+	UnscopedControl unscopedControl;
 
 	@BeforeEach
 	void reset() {
@@ -72,8 +68,8 @@ class EventScopeSelectionTest {
 	@Test
 	@DisplayName("@OnEventScope(prefix='orders.') → only orders.* seen")
 	void prefix_orders_only() {
-		flows.ordersCreateOk();     // in-scope
-		flows.paymentsChargeOk();   // out-of-scope
+		flows.ordersCreateOk(); // in-scope
+		flows.paymentsChargeOk(); // out-of-scope
 
 		assertThat(ordersOnlyFinished.completedCalls).hasSize(1);
 		assertThat(ordersOnlyFinished.failureCalls).isEmpty();
@@ -97,8 +93,8 @@ class EventScopeSelectionTest {
 	void success_vs_failure() {
 		flows.ordersCreateOk();
 		assertThatThrownBy(flows::ordersCreateFail)
-			.isInstanceOf(IllegalArgumentException.class)
-			.hasMessageContaining("create-fail");
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("create-fail");
 
 		// Scoped component sees success via @OnFlowCompleted(SUCCESS) and failure via @OnFlowFailure
 		assertThat(ordersOnlyFinished.completedCalls).hasSize(1); // was 2; now SUCCESS-only to avoid slot overlap
@@ -127,74 +123,106 @@ class EventScopeSelectionTest {
 	@Configuration
 	@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
 	static class Config {
-		@Bean com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
+		@Bean
+		com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
 			return new com.fasterxml.jackson.databind.ObjectMapper();
 		}
 
-		@Bean HandlerScopeValidator handlerScopeValidator(ListableBeanFactory lbf) {
+		@Bean
+		HandlerScopeValidator handlerScopeValidator(ListableBeanFactory lbf) {
 			return new HandlerScopeValidator(lbf);
 		}
 
-		@Bean TelemetryContext telemetryContext(TelemetryProcessorSupport support) {
+		@Bean
+		TelemetryContext telemetryContext(TelemetryProcessorSupport support) {
 			return new TelemetryContext(support);
 		}
 
-		@Bean AttributeParamExtractor attributeParamExtractor() { return new AttributeParamExtractor(); }
+		@Bean
+		AttributeParamExtractor attributeParamExtractor() {
+			return new AttributeParamExtractor();
+		}
 
-		@Bean TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor ex) {
+		@Bean
+		TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor ex) {
 			return new TelemetryAttributeBinder(ex);
 		}
 
-		@Bean TelemetryProcessorSupport telemetryProcessorSupport() { return new TelemetryProcessorSupport(); }
+		@Bean
+		TelemetryProcessorSupport telemetryProcessorSupport() {
+			return new TelemetryProcessorSupport();
+		}
 
-		@Bean List<HandlerGroup> handlerGroups(ListableBeanFactory bf, TelemetryProcessorSupport support) {
+		@Bean
+		List<HandlerGroup> handlerGroups(ListableBeanFactory bf, TelemetryProcessorSupport support) {
 			return new TelemetryEventHandlerScanner(bf, support).handlerGroups();
 		}
 
-		@Bean TelemetryDispatchBus telemetryDispatchBus(List<HandlerGroup> groups) {
+		@Bean
+		TelemetryDispatchBus telemetryDispatchBus(List<HandlerGroup> groups) {
 			return new TelemetryDispatchBus(groups);
 		}
 
-		@Bean TelemetryAspect telemetryAspect(TelemetryProcessor p) { return new TelemetryAspect(p); }
+		@Bean
+		TelemetryAspect telemetryAspect(TelemetryProcessor p) {
+			return new TelemetryAspect(p);
+		}
 
-		@Bean TelemetryProcessor telemetryProcessor(
-			TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
+		@Bean
+		TelemetryProcessor telemetryProcessor(
+				TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
 			return new TelemetryProcessor(binder, support, bus) {
 				@Override
 				protected OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
 					return new OAttributes(Map.of(
-						"test.flow", opts.name(),
-						"declaring.class", pjp.getSignature().getDeclaringTypeName(),
-						"declaring.method", pjp.getSignature().getName()));
+							"test.flow", opts.name(),
+							"declaring.class", pjp.getSignature().getDeclaringTypeName(),
+							"declaring.method", pjp.getSignature().getName()));
 				}
 			};
 		}
 
 		@Bean(name = "EventScopeSelectionTest.flows")
-		Flows flows() { return new Flows(); }
+		Flows flows() {
+			return new Flows();
+		}
 
 		@Bean(name = "EventScopeSelectionTest.ordersOnlyFinished")
-		OrdersOnlyFinished ordersOnlyFinished() { return new OrdersOnlyFinished(); }
+		OrdersOnlyFinished ordersOnlyFinished() {
+			return new OrdersOnlyFinished();
+		}
 
 		@Bean(name = "EventScopeSelectionTest.ordersOrPaymentsFinished")
-		OrdersOrPaymentsFinished ordersOrPaymentsFinished() { return new OrdersOrPaymentsFinished(); }
+		OrdersOrPaymentsFinished ordersOrPaymentsFinished() {
+			return new OrdersOrPaymentsFinished();
+		}
 
 		@Bean(name = "EventScopeSelectionTest.componentScopedUnmatched")
-		ComponentScopedUnmatched componentScopedUnmatched() { return new ComponentScopedUnmatched(); }
+		ComponentScopedUnmatched componentScopedUnmatched() {
+			return new ComponentScopedUnmatched();
+		}
 
 		@Bean(name = "EventScopeSelectionTest.unscopedControl")
-		UnscopedControl unscopedControl() { return new UnscopedControl(); }
+		UnscopedControl unscopedControl() {
+			return new UnscopedControl();
+		}
 
 		/** Emits distinct flows for names and success/failure paths. */
 		static class Flows {
 			@Flow(name = "orders.create")
-			public void ordersCreateOk() { /* success */ }
+			public void ordersCreateOk() {
+				/* success */
+			}
 
 			@Flow(name = "orders.create")
-			public void ordersCreateFail() { throw new IllegalArgumentException("create-fail"); }
+			public void ordersCreateFail() {
+				throw new IllegalArgumentException("create-fail");
+			}
 
 			@Flow(name = "payments.charge")
-			public void paymentsChargeOk() { /* success */ }
+			public void paymentsChargeOk() {
+				/* success */
+			}
 		}
 	}
 
@@ -229,7 +257,7 @@ class EventScopeSelectionTest {
 
 	/** Two prefixes: orders.* OR payments.*; provide a handler for each name. */
 	@EventReceiver
-	@OnEventScope(prefix = "orders.")  // repeatable handled by adding another annotation
+	@OnEventScope(prefix = "orders.") // repeatable handled by adding another annotation
 	@OnEventScope(prefix = "payments.")
 	@OnEventLifecycle(Lifecycle.FLOW_FINISHED)
 	static class OrdersOrPaymentsFinished {
@@ -237,13 +265,19 @@ class EventScopeSelectionTest {
 		final List<TelemetryHolder> failureCalls = new CopyOnWriteArrayList<>();
 
 		@OnFlowSuccess(name = "orders.create")
-		public void ordersCreateOk(TelemetryHolder h) { successCalls.add(h); }
+		public void ordersCreateOk(TelemetryHolder h) {
+			successCalls.add(h);
+		}
 
 		@OnFlowSuccess(name = "payments.charge")
-		public void paymentsChargeOk(TelemetryHolder h) { successCalls.add(h); }
+		public void paymentsChargeOk(TelemetryHolder h) {
+			successCalls.add(h);
+		}
 
 		@OnFlowFailure(name = "orders.create")
-		public void ordersCreateFail(Throwable t, TelemetryHolder h) { failureCalls.add(h); }
+		public void ordersCreateFail(Throwable t, TelemetryHolder h) {
+			failureCalls.add(h);
+		}
 
 		void reset() {
 			successCalls.clear();
@@ -252,8 +286,8 @@ class EventScopeSelectionTest {
 	}
 
 	/**
-	 * Proves that out-of-scope events are invisible: even a component-scoped unmatched handler
-	 * does not fire when the event lies outside the component's @OnEventScope.
+	 * Proves that out-of-scope events are invisible: even a component-scoped unmatched handler does not fire when the
+	 * event lies outside the component's @OnEventScope.
 	 */
 	@EventReceiver
 	@OnEventScope("orders.")
@@ -267,7 +301,9 @@ class EventScopeSelectionTest {
 			componentUnmatched.add(holder);
 		}
 
-		void reset() { componentUnmatched.clear(); }
+		void reset() {
+			componentUnmatched.clear();
+		}
 	}
 
 	/** Control group: no scope → sees everything. */
@@ -278,13 +314,19 @@ class EventScopeSelectionTest {
 		final List<TelemetryHolder> failureCalls = new CopyOnWriteArrayList<>();
 
 		@OnFlowSuccess(name = "orders.create")
-		public void sOrdersCreate(TelemetryHolder h) { successCalls.add(h); }
+		public void sOrdersCreate(TelemetryHolder h) {
+			successCalls.add(h);
+		}
 
 		@OnFlowSuccess(name = "payments.charge")
-		public void sPaymentsCharge(TelemetryHolder h) { successCalls.add(h); }
+		public void sPaymentsCharge(TelemetryHolder h) {
+			successCalls.add(h);
+		}
 
 		@OnFlowFailure(name = "orders.create")
-		public void fOrdersCreate(Throwable t, TelemetryHolder h) { failureCalls.add(h); }
+		public void fOrdersCreate(Throwable t, TelemetryHolder h) {
+			failureCalls.add(h);
+		}
 
 		void reset() {
 			successCalls.clear();

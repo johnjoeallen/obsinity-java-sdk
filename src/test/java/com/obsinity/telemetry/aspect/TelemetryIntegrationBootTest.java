@@ -17,13 +17,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
 import io.opentelemetry.api.trace.SpanKind;
-
 import com.obsinity.telemetry.annotations.BindEventThrowable;
 import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.Flow;
@@ -35,7 +33,6 @@ import com.obsinity.telemetry.annotations.OnFlowSuccess;
 import com.obsinity.telemetry.annotations.PullAttribute;
 import com.obsinity.telemetry.annotations.PushAttribute;
 import com.obsinity.telemetry.annotations.Step;
-
 import com.obsinity.telemetry.dispatch.HandlerGroup;
 import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
 import com.obsinity.telemetry.model.Lifecycle;
@@ -49,11 +46,9 @@ import com.obsinity.telemetry.processor.TelemetryProcessor;
 import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 
-@SpringBootTest(
-	classes = TelemetryIntegrationBootTest.TestApp.class,
-	webEnvironment = SpringBootTest.WebEnvironment.NONE,
-	properties = {"spring.main.web-application-type=none"}
-)
+@TelemetryBootSuite(
+		classes = TelemetryIntegrationBootTest.TestApp.class,
+		properties = {"spring.main.web-application-type=none"})
 class TelemetryIntegrationBootTest {
 
 	private static final Logger log = LoggerFactory.getLogger(TelemetryIntegrationBootTest.class);
@@ -64,22 +59,44 @@ class TelemetryIntegrationBootTest {
 	@Configuration
 	@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
 	static class TestApp {
-		@Bean com.fasterxml.jackson.databind.ObjectMapper objectMapper() { return new com.fasterxml.jackson.databind.ObjectMapper(); }
-		@Bean TelemetryContext telemetryContext(TelemetryProcessorSupport support) { return new TelemetryContext(support); }
-		@Bean AttributeParamExtractor attributeParamExtractor() { return new AttributeParamExtractor(); }
-		@Bean TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor extractor) { return new TelemetryAttributeBinder(extractor); }
-		@Bean TelemetryProcessorSupport telemetryProcessorSupport() { return new TelemetryProcessorSupport(); }
+		@Bean
+		com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
+			return new com.fasterxml.jackson.databind.ObjectMapper();
+		}
+
+		@Bean
+		TelemetryContext telemetryContext(TelemetryProcessorSupport support) {
+			return new TelemetryContext(support);
+		}
+
+		@Bean
+		AttributeParamExtractor attributeParamExtractor() {
+			return new AttributeParamExtractor();
+		}
+
+		@Bean
+		TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor extractor) {
+			return new TelemetryAttributeBinder(extractor);
+		}
+
+		@Bean
+		TelemetryProcessorSupport telemetryProcessorSupport() {
+			return new TelemetryProcessorSupport();
+		}
 
 		@Bean
 		List<HandlerGroup> handlerGroups(ListableBeanFactory beanFactory, TelemetryProcessorSupport support) {
 			return new TelemetryEventHandlerScanner(beanFactory, support).handlerGroups();
 		}
 
-		@Bean TelemetryDispatchBus telemetryDispatchBus(List<HandlerGroup> groups) { return new TelemetryDispatchBus(groups); }
+		@Bean
+		TelemetryDispatchBus telemetryDispatchBus(List<HandlerGroup> groups) {
+			return new TelemetryDispatchBus(groups);
+		}
 
 		@Bean
 		TelemetryProcessor telemetryProcessor(
-			TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus dispatchBus) {
+				TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus dispatchBus) {
 			return new TelemetryProcessor(binder, support, dispatchBus) {
 				@Override
 				protected OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
@@ -95,10 +112,25 @@ class TelemetryIntegrationBootTest {
 			};
 		}
 
-		@Bean TelemetryAspect telemetryAspect(TelemetryProcessor p) { return new TelemetryAspect(p); }
-		@Bean TelemetryIntegrationBootTestService telemetryIntegrationBootTestService(TelemetryContext telemetry) { return new TelemetryIntegrationBootTestService(telemetry); }
-		@Bean RecordingReceiver recordingReceiver() { return new RecordingReceiver(); }
-		@Bean GlobalFallbackReceiver globalFallbackReceiver() { return new GlobalFallbackReceiver(); }
+		@Bean
+		TelemetryAspect telemetryAspect(TelemetryProcessor p) {
+			return new TelemetryAspect(p);
+		}
+
+		@Bean
+		TelemetryIntegrationBootTestService telemetryIntegrationBootTestService(TelemetryContext telemetry) {
+			return new TelemetryIntegrationBootTestService(telemetry);
+		}
+
+		@Bean
+		RecordingReceiver recordingReceiver() {
+			return new RecordingReceiver();
+		}
+
+		@Bean
+		GlobalFallbackReceiver globalFallbackReceiver() {
+			return new GlobalFallbackReceiver();
+		}
 	}
 
 	/** Global fallbacks with phase filtering via method parameter (no lifecycle element on the annotation). */
@@ -140,9 +172,11 @@ class TelemetryIntegrationBootTest {
 		final List<Throwable> capturedErrors = new CopyOnWriteArrayList<>();
 
 		@OnFlowSuccess(name = "flowError")
-		public void normalFinishOnError(TelemetryHolder holder) { normalOnErrorFinishes.add(holder); }
+		public void normalFinishOnError(TelemetryHolder holder) {
+			normalOnErrorFinishes.add(holder);
+		}
 
-		// REMOVED @OnFlowCompleted("flowError") to avoid outcome-slot overlap with success/failure handlers
+		// No @OnFlowCompleted here to avoid overlapping the (FLOW_FINISHED,SUCCESS/FAILURE) slots.
 
 		@OnFlowFailure(name = "flowError")
 		public void errorFinishOnError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
@@ -160,10 +194,16 @@ class TelemetryIntegrationBootTest {
 	@Kind(SpanKind.SERVER)
 	static class TelemetryIntegrationBootTestService {
 		private final TelemetryContext telemetry;
-		TelemetryIntegrationBootTestService(TelemetryContext telemetry) { this.telemetry = telemetry; }
+
+		TelemetryIntegrationBootTestService(TelemetryContext telemetry) {
+			this.telemetry = telemetry;
+		}
 
 		@Flow(name = "flowA")
-		public String flowA() { ((TelemetryIntegrationBootTestService) AopContext.currentProxy()).stepB(); return "ok"; }
+		public String flowA() {
+			((TelemetryIntegrationBootTestService) AopContext.currentProxy()).stepB();
+			return "ok";
+		}
 
 		@Step(name = "stepB")
 		public void stepB() {
@@ -171,21 +211,49 @@ class TelemetryIntegrationBootTest {
 			telemetry.putContext("step.ctx", "ctx-value");
 		}
 
-		@Kind(SpanKind.PRODUCER) @Step(name = "lonelyStep") public void lonelyStep() { /* no-op */ }
-		@Kind(SpanKind.CLIENT) @Flow(name = "flowClient") public void flowClient() { /* no-op */ }
-		@Flow(name = "rootFlow") public void rootFlow() { ((TelemetryIntegrationBootTestService) AopContext.currentProxy()).nestedFlow(); }
-		@Flow(name = "nestedFlow") public void nestedFlow() { /* no-op */ }
+		@Kind(SpanKind.PRODUCER)
+		@Step(name = "lonelyStep")
+		public void lonelyStep() {
+			/* no-op */
+		}
+
+		@Kind(SpanKind.CLIENT)
+		@Flow(name = "flowClient")
+		public void flowClient() {
+			/* no-op */
+		}
+
+		@Flow(name = "rootFlow")
+		public void rootFlow() {
+			((TelemetryIntegrationBootTestService) AopContext.currentProxy()).nestedFlow();
+		}
+
+		@Flow(name = "nestedFlow")
+		public void nestedFlow() {
+			/* no-op */
+		}
 
 		@Flow(name = "paramFlowExample")
-		public void paramFlowExample(@PushAttribute(name = "user.id") String userId,
-									 @PushAttribute(name = "flags") Map<String, Object> flags) { /* no-op */ }
+		public void paramFlowExample(
+				@PushAttribute(name = "user.id") String userId,
+				@PushAttribute(name = "flags") Map<String, Object> flags) {
+			/* no-op */
+		}
 
-		@Flow(name = "flowError") public void flowError() { throw new IllegalStateException("boom"); }
+		@Flow(name = "flowError")
+		public void flowError() {
+			throw new IllegalStateException("boom");
+		}
 	}
 
-	@Autowired TelemetryIntegrationBootTestService service;
-	@Autowired RecordingReceiver receiver;
-	@Autowired GlobalFallbackReceiver fallback;
+	@Autowired
+	TelemetryIntegrationBootTestService service;
+
+	@Autowired
+	RecordingReceiver receiver;
+
+	@Autowired
+	GlobalFallbackReceiver fallback;
 
 	@BeforeEach
 	void reset() {
@@ -200,7 +268,8 @@ class TelemetryIntegrationBootTest {
 	}
 
 	@Test
-	@DisplayName("Flow + Step: step holder seen by handlers has attr+context; parent flow keeps them only on folded OEvent")
+	@DisplayName(
+			"Flow + Step: step holder seen by handlers has attr+context; parent flow keeps them only on folded OEvent")
 	void stepWritesAttrAndContext_FlowHasThemOnlyOnEvent() {
 		String out = service.flowA();
 		assertThat(out).isEqualTo("ok");
@@ -208,8 +277,12 @@ class TelemetryIntegrationBootTest {
 		assertThat(fallback.starts).hasSize(2);
 		assertThat(fallback.finishes).hasSize(2);
 
-		TelemetryHolder stepFinish = fallback.finishes.stream().filter(TelemetryHolder::isStep).findFirst().orElseThrow();
-		TelemetryHolder flowFinish = fallback.finishes.stream().filter(h -> !h.isStep()).findFirst().orElseThrow();
+		TelemetryHolder stepFinish = fallback.finishes.stream()
+				.filter(TelemetryHolder::isStep)
+				.findFirst()
+				.orElseThrow();
+		TelemetryHolder flowFinish =
+				fallback.finishes.stream().filter(h -> !h.isStep()).findFirst().orElseThrow();
 
 		assertThat(stepFinish.isStep()).isTrue();
 		assertThat(stepFinish.attributes().map()).containsEntry("step.flag", true);
@@ -219,7 +292,10 @@ class TelemetryIntegrationBootTest {
 		assertThat(flowFinish.attributes().map()).doesNotContainKey("step.flag");
 		assertThat(flowFinish.getEventContext().get("step.ctx")).isNull();
 
-		OEvent stepEvent = flowFinish.events().stream().filter(e -> "stepB".equals(e.name())).findFirst().orElseThrow();
+		OEvent stepEvent = flowFinish.events().stream()
+				.filter(e -> "stepB".equals(e.name()))
+				.findFirst()
+				.orElseThrow();
 		assertThat(stepEvent.attributes().map()).containsEntry("step.flag", true);
 		assertThat(stepEvent.eventContext()).containsEntry("step.ctx", "ctx-value");
 		assertThat(stepEvent.epochNanos()).isPositive();
@@ -267,7 +343,10 @@ class TelemetryIntegrationBootTest {
 
 		assertThat(fallback.rootBatches).hasSize(1);
 		List<TelemetryHolder> batch = fallback.rootBatches.get(0);
-		log.info("rootFlow batch (size={}): {}", batch.size(), batch.stream().map(TelemetryHolder::name).toList());
+		log.info(
+				"rootFlow batch (size={}): {}",
+				batch.size(),
+				batch.stream().map(TelemetryHolder::name).toList());
 
 		assertThat(batch).hasSize(2);
 		TelemetryHolder first = batch.get(0);
@@ -291,15 +370,15 @@ class TelemetryIntegrationBootTest {
 	@DisplayName("Exception dispatch: FAILURE only; SUCCESS handlers are skipped")
 	void exceptionDispatchesFailureOnly() {
 		assertThatThrownBy(() -> service.flowError())
-			.isInstanceOf(IllegalStateException.class)
-			.hasMessageContaining("boom");
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessageContaining("boom");
 
-		// FAILURE-specific handler should run
+		// FAILURE-specific handler(s) should run (including most specific by type)
 		assertThat(receiver.errorFinishes).hasSize(1);
 		assertThat(receiver.capturedErrors).hasSize(1);
 		assertThat(receiver.capturedErrors.get(0)).isInstanceOf(IllegalStateException.class);
 
-		// No success or completed-on-success handlers should run on failure
+		// No success handlers should run on failure
 		assertThat(receiver.alwaysOnErrorFinishes).isEmpty();
 		assertThat(receiver.normalOnErrorFinishes).isEmpty();
 	}
