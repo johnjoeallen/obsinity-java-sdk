@@ -89,6 +89,7 @@
 4. **Throwable binding**: only on failure handlers.
 5. **Preconditions**: enforce presence of required attributes/context.
 6. **Class scopes refine downwards**: class-level + method-level must both pass.
+7. **Failure handlers**: if multiple are eligible, **most specific throwable binding wins** (`IllegalArgumentException` > `RuntimeException` > `Throwable` > no binding).
 
 ---
 
@@ -196,6 +197,35 @@ public class CheckoutReceiver {
 }
 ```
 
+### Failure Specificity Example
+
+```java
+@EventReceiver
+public class FailureSpecificReceiver {
+
+  @OnFlowFailure("checkout")
+  public void onAnyFailure(@BindEventThrowable Throwable t) {
+      // fallback for any error
+  }
+
+  @OnFlowFailure("checkout")
+  public void onRuntime(@BindEventThrowable RuntimeException ex) {
+      // handles RuntimeException and subclasses
+  }
+
+  @OnFlowFailure("checkout")
+  public void onIllegalArg(@BindEventThrowable IllegalArgumentException ex) {
+      // most specific — wins if exception is IllegalArgumentException
+  }
+}
+```
+
+*If a `new IllegalArgumentException("bad input")` occurs:*
+→ Only `onIllegalArg` is invoked.
+The dispatcher prefers the **most specific type match**.
+
+---
+
 ### Global fallback
 
 ```java
@@ -263,8 +293,13 @@ Flow Started:
    └── @OnFlowStarted
   ↓
 Flow Finished:
-   ├── SUCCESS → @OnFlowSuccess + eligible @OnFlowCompleted
-   └── FAILURE → @OnFlowFailure + eligible @OnFlowCompleted
+   ├── SUCCESS
+   │     ├─ @OnFlowSuccess (non-root)
+   │     └─ eligible @OnFlowCompleted(@OnOutcome=SUCCESS or none)
+   │
+   └── FAILURE
+         ├─ @OnFlowFailure (non-root, most-specific throwable binding wins)
+         └─ eligible @OnFlowCompleted(@OnOutcome=FAILURE or none)
   ↓
 “Always” = @OnFlowCompleted without @OnOutcome
   ↓
@@ -282,8 +317,14 @@ Event arrives →
    Lifecycle filter (@OnEventLifecycle)
    → Scope filter (@OnEventScope)
    → Name match (dot-chop, blank terminator)
-   → Outcome path
-   → If no match: @OnFlowNotMatched / @GlobalFlowFallback
+   → Outcome path:
+        SUCCESS →
+            @OnFlowSuccess + eligible @OnFlowCompleted
+        FAILURE →
+            choose most-specific @OnFlowFailure
+            + eligible @OnFlowCompleted
+   → If no match:
+        @OnFlowNotMatched / @GlobalFlowFallback
 ```
 
 ---
@@ -326,3 +367,4 @@ CONSUMER    PRODUCER
 * **Throwable missing** → Only present in failure events.
 
 ---
+    

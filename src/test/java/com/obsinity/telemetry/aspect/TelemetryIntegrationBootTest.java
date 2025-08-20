@@ -149,6 +149,12 @@ class TelemetryIntegrationBootTest {
 			errorFinishes.add(holder);
 			capturedErrors.add(ex);
 		}
+
+		@OnFlowFailure(name = "flowError")
+		public void errorFinishOnError(@BindEventThrowable IllegalStateException ex, TelemetryHolder holder) {
+			errorFinishes.add(holder);
+			capturedErrors.add(ex);
+		}
 	}
 
 	@Kind(SpanKind.SERVER)

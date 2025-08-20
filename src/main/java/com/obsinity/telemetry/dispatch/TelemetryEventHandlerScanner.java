@@ -116,7 +116,7 @@ public class TelemetryEventHandlerScanner {
 
 			HandlerGroup group = new HandlerGroup(componentName, scope);
 
-			// Guard (exactName + phase + outcome-bucket) within this component
+			// Guard (exactName + phase + outcome-bucket [+ failureType]) within this component
 			Map<String, List<String>> dupGuard = new LinkedHashMap<>();
 
 			// ---------- OnFlowStarted (phase only; no outcomes) ----------
@@ -226,7 +226,12 @@ public class TelemetryEventHandlerScanner {
 		validateBatchParamIfPresent(userClass, m, new Lifecycle[]{Lifecycle.ROOT_FLOW_FINISHED}, false, "flow handler");
 
 		Handler h = buildHandler(bean, userClass, m, exactName);
+
 		String key = dupKey(exactName, phase, outcome.name());
+		// For FAILURE, include the throwable specificity key to distinguish slots; generic/unbound collapse to "*"
+		if (outcome == Outcome.FAILURE) {
+			key = key + "|" + failureTypeKey(h.failureThrowableType());
+		}
 		dupGuard.computeIfAbsent(key, k -> new ArrayList<>()).add(userClass.getSimpleName() + "#" + m.getName());
 
 		if (outcome == Outcome.SUCCESS) {
@@ -248,18 +253,23 @@ public class TelemetryEventHandlerScanner {
 		List<ParamBinder> binders = buildParamBinders(m);
 		String id = userClass.getSimpleName() + "#" + m.getName();
 
+		// Detect a bound throwable type (prefer @BindEventThrowable, else any Throwable param)
+		Class<? extends Throwable> boundThrowable = detectBoundThrowableType(m);
+		List<Class<? extends Throwable>> throwableTypes =
+			(boundThrowable == null) ? List.of() : List.of(boundThrowable);
+
 		return new Handler(
 			bean,
 			m,
 			exactNameOrNull,
 			lifecycleMask,
 			kindMask,
-			List.of(),     // throwableTypes
-			true,          // includeSubclasses
-			null,          // messagePattern
-			null,          // causeTypeOrNull
+			throwableTypes, // used for failure specificity
+			true,           // includeSubclasses
+			null,           // messagePattern
+			null,           // causeTypeOrNull
 			binders,
-			Set.of(),      // required attributes
+			Set.of(),       // required attributes
 			id
 		);
 	}
@@ -633,9 +643,47 @@ public class TelemetryEventHandlerScanner {
 		return name + "|" + phase.name() + "|" + bucket;
 	}
 
+	private static String failureTypeKey(Class<? extends Throwable> t) {
+		if (t == null) return "*";
+		if (t == Throwable.class || t == Exception.class) return "*";
+		return t.getName();
+	}
+
 	private static String strOrBlank(Object v) {
 		if (v == null) return "";
 		String s = String.valueOf(v);
 		return (s == null || s.isBlank()) ? "" : s;
+	}
+
+	/* =========================
+	   Throwable binding discovery
+	   ========================= */
+
+	@SuppressWarnings("unchecked")
+	private static Class<? extends Throwable> detectBoundThrowableType(Method m) {
+		Annotation[][] anns = m.getParameterAnnotations();
+		Class<?>[] pts = m.getParameterTypes();
+
+		// 1) Prefer an explicitly annotated @BindEventThrowable param
+		for (int i = 0; i < pts.length; i++) {
+			boolean hasBind = false;
+			for (Annotation a : anns[i]) {
+				// Avoid a hard dependency if the annotation class isn’t on the compile path here
+				if ("com.obsinity.telemetry.annotations.BindEventThrowable".equals(a.annotationType().getName())) {
+					hasBind = true; break;
+				}
+			}
+			if (hasBind && Throwable.class.isAssignableFrom(pts[i])) {
+				return (Class<? extends Throwable>) pts[i];
+			}
+		}
+
+		// 2) Otherwise, any Throwable parameter counts
+		for (int i = 0; i < pts.length; i++) {
+			if (Throwable.class.isAssignableFrom(pts[i])) {
+				return (Class<? extends Throwable>) pts[i];
+			}
+		}
+		return null; // generic
 	}
 }

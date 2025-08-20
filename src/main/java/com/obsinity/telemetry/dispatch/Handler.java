@@ -55,8 +55,40 @@ public record Handler(
 	}
 
 	/**
+	 * Normalized bound throwable type for FAILURE specificity:
+	 * - If first declared type is Throwable/Exception, or no type is declared, returns null (generic).
+	 * - Otherwise returns that concrete subclass.
+	 */
+	public Class<? extends Throwable> failureThrowableType() {
+		if (throwableTypes == null || throwableTypes.isEmpty()) return null;
+		Class<? extends Throwable> t = throwableTypes.get(0);
+		if (t == null) return null;
+		if (t == Throwable.class || t == Exception.class) return null; // generic
+		return t;
+	}
+
+	/**
+	 * Specificity distance to the actual exception:
+	 * - 0 = exact class match
+	 * - N = N superclasses away
+	 * - Integer.MAX_VALUE = generic (no specific type) or not assignable
+	 */
+	public int failureSpecificityDistance(Throwable ex) {
+		Class<? extends Throwable> target = failureThrowableType();
+		if (target == null || ex == null) return Integer.MAX_VALUE;
+		Class<?> c = ex.getClass();
+		int d = 0;
+		while (c != null) {
+			if (target.equals(c)) return d;
+			c = c.getSuperclass();
+			d++;
+		}
+		return Integer.MAX_VALUE;
+	}
+
+	/**
 	 * Fast acceptance test combining lifecycle/kind masks, required attrs, and (on failure only) throwable filters.
-	 * Note: "mode" routing (success/failure/completed) is now decided by the dispatcher’s bucket selection.
+	 * Note: outcome routing (success/failure) is decided by the dispatcher's buckets.
 	 */
 	public boolean accepts(Lifecycle phase, TelemetryHolder h, boolean failed, Throwable error) {
 		// 1) Lifecycle / Kind
@@ -70,7 +102,7 @@ public record Handler(
 			if (attrs == null || !attrs.keySet().containsAll(requiredAttrs)) return false;
 		}
 
-		// 3) Throwable filters apply ONLY on failure path (dispatcher will only consider this handler in failure buckets)
+		// 3) Throwable filters apply ONLY on failure path (dispatcher will only consider failure bucket when failed=true)
 		if (!failed) return true;
 
 		// 3a) Type checks
