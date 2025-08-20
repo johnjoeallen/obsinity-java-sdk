@@ -13,28 +13,28 @@ import io.opentelemetry.api.common.AttributesBuilder;
 
 @JsonInclude(Include.NON_NULL)
 public final class OAttributes {
-	private final Map<String, Object> asMap;
+	private final Map<String, Object> attributes;
 
-	public OAttributes(Map<String, Object> asMap) {
-		if (asMap != null) {
-			this.asMap = new LinkedHashMap<>(asMap);
+	public OAttributes(Map<String, Object> attributes) {
+		if (attributes != null) {
+			this.attributes = new LinkedHashMap<>(attributes);
 		} else {
-			this.asMap = new LinkedHashMap<>();
+			this.attributes = new LinkedHashMap<>();
 		}
 	}
 
-	public Map<String, Object> asMap() {
-		return asMap;
+	public Map<String, Object> map() {
+		return attributes;
 	}
 
 	/** Put a key/value (null keys are ignored). */
 	public void put(String key, Object value) {
-		if (key != null) asMap.put(key, value);
+		if (key != null) attributes.put(key, value);
 	}
 
 	public Attributes toOtel() {
 		AttributesBuilder b = Attributes.builder();
-		if (asMap != null) asMap.forEach((k, v) -> putBestEffort(b, k, v));
+		attributes.forEach((k, v) -> putBestEffort(b, k, v));
 		return b.build();
 	}
 

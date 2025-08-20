@@ -66,7 +66,7 @@ public record Handler(
 
 		// 2) Required attributes
 		if (requiredAttrs != null && !requiredAttrs.isEmpty()) {
-			Map<String, ?> attrs = (h == null || h.attributes() == null) ? null : h.attributes().asMap();
+			Map<String, ?> attrs = (h == null || h.attributes() == null) ? null : h.attributes().map();
 			if (attrs == null || !attrs.keySet().containsAll(requiredAttrs)) return false;
 		}
 

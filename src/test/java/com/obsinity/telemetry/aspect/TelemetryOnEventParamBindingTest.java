@@ -294,7 +294,7 @@ class TelemetryOnEventParamBindingTest {
 			.findFirst()
 			.orElseThrow();
 
-		assertThat(folded.attributes().asMap())
+		assertThat(folded.attributes().map())
 			.containsEntry("step.answer", 7)
 			.containsEntry("step.note", "ok");
 		assertThat(folded.eventContext().get("step.ctx")).isEqualTo("ctx!");

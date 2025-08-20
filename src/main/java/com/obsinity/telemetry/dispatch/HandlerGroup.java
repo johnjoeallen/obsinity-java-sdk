@@ -61,9 +61,43 @@ public final class HandlerGroup {
 		this.scope = (scope == null ? Scope.allowAll() : scope);
 	}
 
+	/* =========================
+	   Group-level gates (used by dispatcher)
+	   ========================= */
+
+	/** True if this group declared support for the given lifecycle phase. */
+	public boolean supportsLifecycle(Lifecycle phase) {
+		return scope.supportsLifecycle(phase);
+	}
+
 	/** True if this group should see the given event (component-level filter). */
 	public boolean isInScope(Lifecycle phase, String eventName, TelemetryHolder holder) {
+		// Currently Scope tests prefixes and lifecycle only; extend here if you add more gates.
 		return scope.test(phase, eventName);
+	}
+
+	/**
+	 * Fast pre-check: does the group have any handlers interested in this phase/outcome?
+	 * Used to avoid probing per-handler accepts() when nothing is registered for the outcome.
+	 */
+	public boolean hasAnyHandlersFor(Lifecycle phase, boolean failed) {
+		// Check unmatched first (cheap)
+		if (!unmatched.combined(phase).isEmpty()) return true;
+		if (!(failed ? unmatched.failure(phase) : unmatched.success(phase)).isEmpty()) return true;
+
+		// Check global unmatched registrations (for dispatcher’s global-unmatched path)
+		if (!globalUnmatched.combined(phase).isEmpty()) return true;
+		if (!(failed ? globalUnmatched.failure(phase) : globalUnmatched.success(phase)).isEmpty()) return true;
+
+		// Scan named tiers for this phase (stop at first non-empty bucket for the outcome)
+		for (ModeBucketsByPhase byPhase : tiers.values()) {
+			ModeBuckets mb = byPhase.peek(phase);
+			if (mb == null) continue;
+			if (!mb.completed.isEmpty()) return true;
+			if (failed && !mb.failure.isEmpty()) return true;
+			if (!failed && !mb.success.isEmpty()) return true;
+		}
+		return false;
 	}
 
 	/* =========================
@@ -132,6 +166,7 @@ public final class HandlerGroup {
 	 */
 	public ModeBuckets findNearestEligibleTier(
 		Lifecycle phase, String eventName, TelemetryHolder holder, boolean failed, Throwable error) {
+
 		String name = eventName;
 		while (name != null && !name.isEmpty()) {
 			ModeBucketsByPhase byPhase = tiers.get(name);
@@ -184,6 +219,12 @@ public final class HandlerGroup {
 			return plc;
 		}
 
+		/** Lifecycle-only check (used by HandlerGroup.supportsLifecycle). */
+		boolean supportsLifecycle(Lifecycle phase) {
+			return phases == null || (phase != null && phases.contains(phase));
+		}
+
+		/** Full group-scope predicate (prefix AND lifecycle). */
 		boolean test(Lifecycle phase, String eventName) {
 			// prefixes
 			if (prefixes != null && eventName != null) {
@@ -197,7 +238,7 @@ public final class HandlerGroup {
 				if (!hit) return false;
 			}
 			// phase
-			if (phases != null && (phase == null || !phases.contains(phase))) return false;
+			if (!supportsLifecycle(phase)) return false;
 
 			return true;
 		}
@@ -209,6 +250,11 @@ public final class HandlerGroup {
 
 		public ModeBuckets forPhase(Lifecycle p) {
 			return by.computeIfAbsent(p, k -> new ModeBuckets());
+		}
+
+		/** Peek without creating a bucket (used by hasAnyHandlersFor). */
+		public ModeBuckets peek(Lifecycle p) {
+			return by.get(p);
 		}
 	}
 
@@ -237,7 +283,7 @@ public final class HandlerGroup {
 		}
 
 		// Convenience views used by dispatcher (for current phase)
-		public List<Handler> combined(Lifecycle p) { return forPhase(p).completed; } // alias for backwards compat
+		public List<Handler> combined(Lifecycle p) { return forPhase(p).completed; } // alias for “completed”
 		public List<Handler> success(Lifecycle p)  { return forPhase(p).success; }
 		public List<Handler> failure(Lifecycle p)  { return forPhase(p).failure; }
 	}

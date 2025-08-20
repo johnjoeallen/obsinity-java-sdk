@@ -1,7 +1,5 @@
 package com.obsinity.telemetry.receivers;
 
-import java.lang.annotation.Annotation;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
@@ -92,16 +90,37 @@ public class TelemetryDispatchBus {
 			ctxKeys(holder),
 			(groups == null ? 0 : groups.size()));
 
-		boolean anyMatched = false;            // flips when any named handler matched
-		boolean anyComponentUnmatched = false; // flips when a component-level unmatched ran
+		boolean anyMatched = false;             // flips when any named handler matched
+		boolean anyComponentUnmatched = false;  // flips when a component-level unmatched ran
+		boolean anyGroupEligibleForPhase = false; // lifecycle+scope+outcome presence
 
-		// Per-component pass: named handlers -> component-unmatched
+		// Per-component pass: group-level gates -> named handlers -> component-unmatched
 		for (int i = 0; i < groups.size(); i++) {
 			HandlerGroup g = groups.get(i);
 			String componentName = safeComponentName(g);
 			log.debug("BUS: component[{}]='{}' begin (event='{}', phase={})", i, componentName, eventName, phase);
 
-			// Find the nearest name tier (dot-chop) for this component
+			// 1) Lifecycle gating
+			if (!g.supportsLifecycle(phase)) {
+				log.debug("BUS: component[{}]='{}' skipped by lifecycle (phase={})", i, componentName, phase);
+				continue;
+			}
+
+			// 2) Static scope (prefix/name/etc.)
+			if (!g.isInScope(phase, eventName, holder)) {
+				log.debug("BUS: component[{}]='{}' out-of-scope -> skip", i, componentName);
+				continue;
+			}
+
+			// 3) Outcome availability (fast check to avoid useless handler probes)
+			if (!g.hasAnyHandlersFor(phase, failed)) {
+				log.debug("BUS: component[{}]='{}' has no handlers for outcome={}, phase={}", i, componentName, failed, phase);
+				continue;
+			}
+
+			anyGroupEligibleForPhase = true;
+
+			// 4) Resolve nearest tier (dot-chop) AFTER group-level gates
 			ModeBuckets chosen = g.findNearestEligibleTier(phase, eventName, holder, failed, error);
 			log.debug("BUS: component[{}]='{}' tier found?={}", i, componentName, chosen != null);
 			if (chosen != null) {
@@ -114,15 +133,10 @@ public class TelemetryDispatchBus {
 					(chosen.failure == null ? 0 : chosen.failure.size()));
 			}
 
-			if (!g.isInScope(phase, eventName, holder)) {
-				log.debug("BUS: component[{}]='{}' out-of-scope -> skip", i, componentName);
-				continue;
-			}
-
 			if (chosen != null) {
 				boolean matchedHere = false;
 
-				// Always run completed (both outcomes) if eligible
+				// completed (both outcomes) first
 				if (hasAnyEligible(chosen.completed, holder, phase, failed, error, i, componentName, "tier.completed")) {
 					runAll(chosen.completed, holder, phase, failed, error, i, componentName, "tier.completed");
 					matchedHere = true;
@@ -138,9 +152,7 @@ public class TelemetryDispatchBus {
 						anyComponentUnmatched |= invoked;
 						log.debug(
 							"BUS: component[{}]='{}' no eligible failure handlers -> component-unmatched invoked={}",
-							i,
-							componentName,
-							invoked);
+							i, componentName, invoked);
 					}
 				} else {
 					if (hasAnyEligible(chosen.success, holder, phase, false, null, i, componentName, "tier.success")) {
@@ -152,9 +164,7 @@ public class TelemetryDispatchBus {
 						anyComponentUnmatched |= invoked;
 						log.debug(
 							"BUS: component[{}]='{}' no eligible success handlers -> component-unmatched invoked={}",
-							i,
-							componentName,
-							invoked);
+							i, componentName, invoked);
 					}
 				}
 
@@ -163,8 +173,7 @@ public class TelemetryDispatchBus {
 				// No tier -> try component-scoped unmatched for the current phase
 				boolean invoked = invokeComponentUnmatched(g, phase, holder, failed, error, i, componentName);
 				anyComponentUnmatched |= invoked;
-				log.debug(
-					"BUS: component[{}]='{}' no tier -> component-unmatched invoked={}", i, componentName, invoked);
+				log.debug("BUS: component[{}]='{}' no tier -> component-unmatched invoked={}", i, componentName, invoked);
 			}
 
 			log.debug("BUS: component[{}]='{}' end", i, componentName);
@@ -172,17 +181,22 @@ public class TelemetryDispatchBus {
 
 		// GLOBAL unmatched: only if nothing matched anywhere and no component-unmatched fired
 		if (!anyMatched && !anyComponentUnmatched) {
-			boolean invoked = invokeGlobalUnmatchedAcrossAllComponents(phase, holder, failed, error);
-			log.debug("BUS: global-unmatched invoked={} (no named handlers matched and no component-unmatched)", invoked);
-			if (!invoked) {
-				log.error(
-					"Unhandled {} event name='{}' phase={} traceId={} spanId={} ex={}",
-					failed ? "failure" : "success",
-					holder.name(),
-					phase,
-					safe(holder.traceId()),
-					safe(holder.spanId()),
-					String.valueOf(error));
+			if (anyGroupEligibleForPhase) {
+				boolean invoked = invokeGlobalUnmatchedAcrossAllComponents(phase, holder, failed, error, eventName);
+				log.debug("BUS: global-unmatched invoked={} (no named handlers matched and no component-unmatched)", invoked);
+				if (!invoked) {
+					log.error(
+						"Unhandled {} event name='{}' phase={} traceId={} spanId={} ex={}",
+						failed ? "failure" : "success",
+						holder.name(),
+						phase,
+						safe(holder.traceId()),
+						safe(holder.spanId()),
+						String.valueOf(error));
+				}
+			} else {
+				// Nothing in the system declared interest in this phase/outcome/name -> suppress noise
+				log.debug("BUS: suppress unhandled (no lifecycle/scope/outcome-eligible groups for phase={})", phase);
 			}
 		}
 	}
@@ -302,10 +316,17 @@ public class TelemetryDispatchBus {
 
 	/** Global unmatched across all components: returns true if any invoked (no phase fallback). */
 	private boolean invokeGlobalUnmatchedAcrossAllComponents(
-		Lifecycle phase, TelemetryHolder holder, boolean failed, Throwable error) {
+		Lifecycle phase, TelemetryHolder holder, boolean failed, Throwable error, String eventName) {
+
 		boolean invoked = false;
 		for (int i = 0; i < groups.size(); i++) {
 			HandlerGroup g = groups.get(i);
+
+			// Respect lifecycle and scope even for global unmatched to avoid unrelated receivers
+			if (!g.supportsLifecycle(phase) || !g.isInScope(phase, eventName, holder)) {
+				continue;
+			}
+
 			String componentName = safeComponentName(g);
 
 			for (Handler h : g.globalUnmatched.combined(phase)) { // alias to completed
@@ -370,7 +391,7 @@ public class TelemetryDispatchBus {
 
 	private static String safeComponentName(HandlerGroup g) {
 		try {
-			return g.componentName;
+			return g.getComponentName();
 		} catch (Throwable ignored) {
 			return g.getClass().getSimpleName();
 		}
@@ -396,7 +417,7 @@ public class TelemetryDispatchBus {
 		try {
 			Object attrs = holder.attributes();
 			if (attrs == null) return "[]";
-			Method asMap = attrs.getClass().getMethod("asMap");
+			Method asMap = attrs.getClass().getMethod("map");
 			Object m = asMap.invoke(attrs);
 			if (m instanceof Map<?, ?> map) {
 				return map.keySet().toString();

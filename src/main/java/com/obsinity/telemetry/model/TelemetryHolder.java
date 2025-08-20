@@ -413,11 +413,11 @@ public class TelemetryHolder {
 
 	/* ========================= Attribute convenience ========================= */
 	public boolean hasAttr(String key) {
-		return key != null && attributes != null && attributes.asMap().containsKey(key);
+		return key != null && attributes != null && attributes.map().containsKey(key);
 	}
 
 	public Object attrRaw(String key) {
-		return hasAttr(key) ? attributes.asMap().get(key) : null;
+		return hasAttr(key) ? attributes.map().get(key) : null;
 	}
 
 	@SuppressWarnings("unchecked")
@@ -472,7 +472,7 @@ public class TelemetryHolder {
 
 	public Long attrAsLong(String key) {
 		if (!hasAttr(key)) return null;
-		Object v = attributes.asMap().get(key);
+		Object v = attributes.map().get(key);
 		if (v instanceof Number n) return n.longValue();
 		if (v instanceof String s)
 			try {
@@ -484,7 +484,7 @@ public class TelemetryHolder {
 
 	public Integer attrAsInt(String key) {
 		if (!hasAttr(key)) return null;
-		Object v = attributes.asMap().get(key);
+		Object v = attributes.map().get(key);
 		if (v instanceof Number n) return n.intValue();
 		if (v instanceof String s)
 			try {
@@ -496,7 +496,7 @@ public class TelemetryHolder {
 
 	public Double attrAsDouble(String key) {
 		if (!hasAttr(key)) return null;
-		Object v = attributes.asMap().get(key);
+		Object v = attributes.map().get(key);
 		if (v instanceof Number n) return n.doubleValue();
 		if (v instanceof String s)
 			try {
@@ -508,7 +508,7 @@ public class TelemetryHolder {
 
 	public Boolean attrAsBoolean(String key) {
 		if (!hasAttr(key)) return null;
-		Object v = attributes.asMap().get(key);
+		Object v = attributes.map().get(key);
 		if (v instanceof Boolean b) return b;
 		if (v instanceof Number n) return n.intValue() != 0;
 		if (v instanceof String s) {
@@ -520,7 +520,7 @@ public class TelemetryHolder {
 	}
 
 	public Map<String, String> stringAttributes() {
-		Map<String, Object> src = (attributes != null ? attributes.asMap() : new LinkedHashMap<>());
+		Map<String, Object> src = (attributes != null ? attributes.map() : new LinkedHashMap<>());
 		Map<String, String> out = new LinkedHashMap<>(src.size());
 		for (Map.Entry<String, Object> e : src.entrySet()) {
 			Object v = e.getValue();
@@ -592,7 +592,7 @@ public class TelemetryHolder {
 	public String effectiveServiceId() {
 		if (serviceId != null && !serviceId.isBlank()) return serviceId;
 		if (resource == null || resource.attributes() == null) return null;
-		Object v = resource.attributes().asMap().get(SERVICE_ID_ATTR);
+		Object v = resource.attributes().map().get(SERVICE_ID_ATTR);
 		return v == null ? null : String.valueOf(v);
 	}
 
@@ -600,7 +600,7 @@ public class TelemetryHolder {
 		String top = (serviceId == null || serviceId.isBlank()) ? null : serviceId;
 		String fromRes = null;
 		if (resource != null && resource.attributes() != null) {
-			Object v = resource.attributes().asMap().get(SERVICE_ID_ATTR);
+			Object v = resource.attributes().map().get(SERVICE_ID_ATTR);
 			if (v != null && !String.valueOf(v).isBlank()) fromRes = String.valueOf(v);
 		}
 		if (top == null && fromRes == null) {
