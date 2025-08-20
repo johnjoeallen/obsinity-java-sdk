@@ -1,6 +1,8 @@
 package com.obsinity.telemetry.receivers;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -101,9 +103,13 @@ public class TelemetryDispatchBus {
 			log.debug("BUS: component[{}]='{}' begin (event='{}', phase={})", i, componentName, eventName, phase);
 
 			// 1) Lifecycle gating
-			if (!g.supportsLifecycle(phase)) {
-				log.debug("BUS: component[{}]='{}' skipped by lifecycle (phase={})", i, componentName, phase);
-				continue;
+			try {
+				if (g.getScope() != null && !g.supportsLifecycle(phase)) {
+					log.debug("BUS: component[{}]='{}' skipped by lifecycle (phase={})", i, componentName, phase);
+					continue;
+				}
+			} catch (NoSuchMethodError | Exception ignored) {
+				// if supportsLifecycle() doesn't exist on this build, skip this optimization
 			}
 
 			// 2) Static scope (prefix/name/etc.)
@@ -113,9 +119,13 @@ public class TelemetryDispatchBus {
 			}
 
 			// 3) Outcome availability (fast check to avoid useless handler probes)
-			if (!g.hasAnyHandlersFor(phase, failed)) {
-				log.debug("BUS: component[{}]='{}' has no handlers for outcome={}, phase={}", i, componentName, failed, phase);
-				continue;
+			try {
+				if (!g.hasAnyHandlersFor(phase, failed)) {
+					log.debug("BUS: component[{}]='{}' has no handlers for outcome={}, phase={}", i, componentName, failed, phase);
+					continue;
+				}
+			} catch (NoSuchMethodError | Exception ignored) {
+				// if hasAnyHandlersFor() doesn't exist on this build, proceed as before
 			}
 
 			anyGroupEligibleForPhase = true;
@@ -143,9 +153,14 @@ public class TelemetryDispatchBus {
 				}
 
 				if (failed) {
-					if (hasAnyEligible(chosen.failure, holder, phase, true, error, i, componentName, "tier.failure")) {
-						runAll(chosen.failure, holder, phase, true, error, i, componentName, "tier.failure");
-						matchedHere = true;
+					// Most-specific failure selection
+					if (chosen.failure != null && !chosen.failure.isEmpty()) {
+						List<Handler> selected = selectMostSpecificFailureHandlers(
+							chosen.failure, holder, phase, error, i, componentName);
+						if (!selected.isEmpty()) {
+							runAll(selected, holder, phase, true, error, i, componentName, "tier.failure[selected]");
+							matchedHere = true;
+						}
 					}
 					if (!matchedHere) {
 						boolean invoked = invokeComponentUnmatched(g, phase, holder, true, error, i, componentName);
@@ -199,6 +214,92 @@ public class TelemetryDispatchBus {
 				log.debug("BUS: suppress unhandled (no lifecycle/scope/outcome-eligible groups for phase={})", phase);
 			}
 		}
+	}
+
+	// ---- most-specific failure selection ----
+
+	private List<Handler> selectMostSpecificFailureHandlers(
+		List<Handler> failureHandlers,
+		TelemetryHolder holder,
+		Lifecycle phase,
+		Throwable error,
+		int componentIdx,
+		String componentName
+	) {
+		if (failureHandlers == null || failureHandlers.isEmpty() || error == null) return List.of();
+
+		// 1) Filter to handlers that accept
+		List<Handler> elig = new ArrayList<>();
+		for (Handler h : failureHandlers) {
+			boolean ok = h.accepts(phase, holder, true, error);
+			log.debug(
+				"BUS: failure-candidate [{}]='{}' accepts?={} handler={} errClass={}",
+				componentIdx, componentName, ok, safeHandlerName(h),
+				error.getClass().getName());
+			if (ok) elig.add(h);
+		}
+		if (elig.isEmpty()) return List.of();
+
+		// 2) Partition specific vs generic
+		List<Handler> specifics = new ArrayList<>();
+		List<Handler> generics  = new ArrayList<>();
+		for (Handler h : elig) {
+			Class<? extends Throwable> tt = firstThrowableType(h);
+			if (isGenericThrowable(tt)) generics.add(h);
+			else specifics.add(h);
+		}
+
+		// 3) If there are specific handlers, choose those with the minimum distance
+		if (!specifics.isEmpty()) {
+			int best = Integer.MAX_VALUE;
+			List<Handler> winners = new ArrayList<>();
+			for (Handler h : specifics) {
+				Class<? extends Throwable> tt = firstThrowableType(h);
+				int d = distanceTo(error.getClass(), tt);
+				if (d >= 0) {
+					if (d < best) {
+						best = d;
+						winners.clear();
+						winners.add(h);
+					} else if (d == best) {
+						winners.add(h);
+					}
+				}
+			}
+			log.debug("BUS: specific failure selection winners={} bestDistance={}",
+				winners.stream().map(TelemetryDispatchBus::safeHandlerName).toList(), best);
+			return winners;
+		}
+
+		// 4) Otherwise fall back to all generic matches
+		log.debug("BUS: no specific failure handlers matched; falling back to GENERIC");
+		return generics;
+	}
+
+	private static Class<? extends Throwable> firstThrowableType(Handler h) {
+		try {
+			List<Class<? extends Throwable>> tts = h.throwableTypes();
+			return (tts == null || tts.isEmpty()) ? null : tts.get(0);
+		} catch (Throwable ignored) {
+			return null;
+		}
+	}
+
+	private static boolean isGenericThrowable(Class<? extends Throwable> t) {
+		return t == null || t == Throwable.class || t == Exception.class;
+	}
+
+	/** return number of super steps from fromClass to target (inclusive), or -1 if not assignable */
+	private static int distanceTo(Class<?> fromClass, Class<?> target) {
+		if (target == null) return Integer.MAX_VALUE;
+		if (!target.isAssignableFrom(fromClass)) return -1;
+		int d = 0;
+		Class<?> cur = fromClass;
+		while (cur != null && !cur.equals(target)) {
+			cur = cur.getSuperclass();
+			d++;
+		}
+		return d;
 	}
 
 	// ---- eligibility (without invoking) ----
@@ -323,8 +424,12 @@ public class TelemetryDispatchBus {
 			HandlerGroup g = groups.get(i);
 
 			// Respect lifecycle and scope even for global unmatched to avoid unrelated receivers
-			if (!g.supportsLifecycle(phase) || !g.isInScope(phase, eventName, holder)) {
-				continue;
+			try {
+				if ((g.getScope() != null && !g.supportsLifecycle(phase)) || !g.isInScope(phase, eventName, holder)) {
+					continue;
+				}
+			} catch (NoSuchMethodError | Exception ignored) {
+				if (!g.isInScope(phase, eventName, holder)) continue;
 			}
 
 			String componentName = safeComponentName(g);
