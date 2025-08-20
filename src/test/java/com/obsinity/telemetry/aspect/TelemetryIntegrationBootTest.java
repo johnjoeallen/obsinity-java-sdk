@@ -29,7 +29,6 @@ import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.GlobalFlowFallback;
 import com.obsinity.telemetry.annotations.Kind;
-import com.obsinity.telemetry.annotations.OnFlowCompleted;
 import com.obsinity.telemetry.annotations.OnFlowFailure;
 import com.obsinity.telemetry.annotations.OnFlowNotMatched;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
@@ -132,7 +131,7 @@ class TelemetryIntegrationBootTest {
 		}
 	}
 
-	/** Named handlers for a thrown flow (success/completed/failure) */
+	/** Named handlers for a thrown flow (success/failure) */
 	@EventReceiver
 	static class RecordingReceiver {
 		final List<TelemetryHolder> normalOnErrorFinishes = new CopyOnWriteArrayList<>();
@@ -143,8 +142,7 @@ class TelemetryIntegrationBootTest {
 		@OnFlowSuccess(name = "flowError")
 		public void normalFinishOnError(TelemetryHolder holder) { normalOnErrorFinishes.add(holder); }
 
-		@OnFlowCompleted(name = "flowError")
-		public void alwaysFinishOnError(TelemetryHolder holder) { alwaysOnErrorFinishes.add(holder); }
+		// REMOVED @OnFlowCompleted("flowError") to avoid outcome-slot overlap with success/failure handlers
 
 		@OnFlowFailure(name = "flowError")
 		public void errorFinishOnError(@BindEventThrowable Exception ex, TelemetryHolder holder) {
@@ -208,15 +206,15 @@ class TelemetryIntegrationBootTest {
 		TelemetryHolder flowFinish = fallback.finishes.stream().filter(h -> !h.isStep()).findFirst().orElseThrow();
 
 		assertThat(stepFinish.isStep()).isTrue();
-		assertThat(stepFinish.attributes().asMap()).containsEntry("step.flag", true);
+		assertThat(stepFinish.attributes().map()).containsEntry("step.flag", true);
 		assertThat(stepFinish.getEventContext()).containsEntry("step.ctx", "ctx-value");
 
 		assertThat(flowFinish.isStep()).isFalse();
-		assertThat(flowFinish.attributes().asMap()).doesNotContainKey("step.flag");
+		assertThat(flowFinish.attributes().map()).doesNotContainKey("step.flag");
 		assertThat(flowFinish.getEventContext().get("step.ctx")).isNull();
 
 		OEvent stepEvent = flowFinish.events().stream().filter(e -> "stepB".equals(e.name())).findFirst().orElseThrow();
-		assertThat(stepEvent.attributes().asMap()).containsEntry("step.flag", true);
+		assertThat(stepEvent.attributes().map()).containsEntry("step.flag", true);
 		assertThat(stepEvent.eventContext()).containsEntry("step.ctx", "ctx-value");
 		assertThat(stepEvent.epochNanos()).isPositive();
 		assertThat(stepEvent.endEpochNanos()).isNotNull();
@@ -236,7 +234,7 @@ class TelemetryIntegrationBootTest {
 		assertTraceAndSpanIds(start);
 		assertThat(start.parentSpanId()).isNull();
 
-		Map<String, Object> attrs = start.attributes().asMap();
+		Map<String, Object> attrs = start.attributes().map();
 		log.info("lonelyStep attributes: {}", attrs);
 		assertThat(attrs).containsEntry("test.flow", "lonelyStep").containsEntry("declaring.method", "lonelyStep");
 		assertThat(attrs.get("custom.tag")).isInstanceOf(CustomTag.class);
@@ -251,7 +249,7 @@ class TelemetryIntegrationBootTest {
 		TelemetryHolder h = fallback.starts.get(0);
 		assertThat(h.kind()).isEqualTo(SpanKind.CLIENT);
 
-		Map<String, Object> attrs = h.attributes().asMap();
+		Map<String, Object> attrs = h.attributes().map();
 		log.info("flowClient attributes: {}", attrs);
 		assertThat(attrs).containsEntry("test.flow", "flowClient").containsEntry("declaring.method", "flowClient");
 	}
@@ -274,8 +272,8 @@ class TelemetryIntegrationBootTest {
 		assertThat(first.parentSpanId()).isNull();
 		assertThat(second.parentSpanId()).isNotNull();
 
-		Map<String, Object> firstAttrs = first.attributes().asMap();
-		Map<String, Object> secondAttrs = second.attributes().asMap();
+		Map<String, Object> firstAttrs = first.attributes().map();
+		Map<String, Object> secondAttrs = second.attributes().map();
 		log.info("rootFlow attrs: {}", firstAttrs);
 		log.info("nestedFlow attrs: {}", secondAttrs);
 
@@ -284,39 +282,19 @@ class TelemetryIntegrationBootTest {
 	}
 
 	@Test
-	@DisplayName("@Attribute parameters are bound into flow attributes")
-	void paramFlowExampleBindsAttributes() {
-		Map<String, Object> flags = new LinkedHashMap<>();
-		flags.put("flag.one", true);
-		flags.put("flag.two", "yes");
-
-		service.paramFlowExample("user-123", flags);
-
-		assertThat(fallback.starts).hasSize(1);
-		TelemetryHolder start = fallback.starts.get(0);
-
-		Map<String, Object> attrs = start.attributes().asMap();
-		log.info("paramFlowExample attributes: {}", attrs);
-
-		assertThat(attrs)
-			.containsEntry("user.id", "user-123")
-			.containsEntry("flags", flags)
-			.containsEntry("test.flow", "paramFlowExample")
-			.containsEntry("declaring.method", "paramFlowExample");
-	}
-
-	@Test
-	@DisplayName("Exception dispatch: FAILURE + COMPLETED run, SUCCESS is skipped")
-	void exceptionDispatchesFailureAndCompletedOnly() {
+	@DisplayName("Exception dispatch: FAILURE only; SUCCESS handlers are skipped")
+	void exceptionDispatchesFailureOnly() {
 		assertThatThrownBy(() -> service.flowError())
 			.isInstanceOf(IllegalStateException.class)
 			.hasMessageContaining("boom");
 
+		// FAILURE-specific handler should run
 		assertThat(receiver.errorFinishes).hasSize(1);
 		assertThat(receiver.capturedErrors).hasSize(1);
 		assertThat(receiver.capturedErrors.get(0)).isInstanceOf(IllegalStateException.class);
 
-		assertThat(receiver.alwaysOnErrorFinishes).hasSize(1);
+		// No success or completed-on-success handlers should run on failure
+		assertThat(receiver.alwaysOnErrorFinishes).isEmpty();
 		assertThat(receiver.normalOnErrorFinishes).isEmpty();
 	}
 

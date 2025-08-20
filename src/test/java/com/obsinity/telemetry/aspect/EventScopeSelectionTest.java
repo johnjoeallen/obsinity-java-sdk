@@ -27,6 +27,8 @@ import com.obsinity.telemetry.annotations.OnFlowCompleted;
 import com.obsinity.telemetry.annotations.OnFlowFailure;
 import com.obsinity.telemetry.annotations.OnFlowNotMatched;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
+import com.obsinity.telemetry.annotations.OnOutcome;
+import com.obsinity.telemetry.annotations.Outcome;
 
 import com.obsinity.telemetry.dispatch.HandlerGroup;
 import com.obsinity.telemetry.dispatch.HandlerScopeValidator;
@@ -98,8 +100,8 @@ class EventScopeSelectionTest {
 			.isInstanceOf(IllegalArgumentException.class)
 			.hasMessageContaining("create-fail");
 
-		// Scoped component sees the success and the failure via their respective handlers
-		assertThat(ordersOnlyFinished.completedCalls).hasSize(1);
+		// Scoped component sees success via @OnFlowCompleted(SUCCESS) and failure via @OnFlowFailure
+		assertThat(ordersOnlyFinished.completedCalls).hasSize(1); // was 2; now SUCCESS-only to avoid slot overlap
 		assertThat(ordersOnlyFinished.failureCalls).hasSize(1);
 
 		// Control sees both success and failure
@@ -206,8 +208,9 @@ class EventScopeSelectionTest {
 		final List<TelemetryHolder> completedCalls = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> failureCalls = new CopyOnWriteArrayList<>();
 
-		// Runs on both success/failure completion for orders.create
+		// Runs on SUCCESS completion for orders.create (narrowed to avoid overlap with @OnFlowFailure)
 		@OnFlowCompleted(name = "orders.create")
+		@OnOutcome(Outcome.SUCCESS)
 		public void completed(TelemetryHolder h) {
 			completedCalls.add(h);
 		}

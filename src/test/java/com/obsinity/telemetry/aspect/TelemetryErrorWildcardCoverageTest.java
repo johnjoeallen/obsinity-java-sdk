@@ -26,6 +26,8 @@ import com.obsinity.telemetry.annotations.Kind;
 import com.obsinity.telemetry.annotations.OnFlowCompleted;
 import com.obsinity.telemetry.annotations.OnFlowNotMatched;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
+import com.obsinity.telemetry.annotations.OnOutcome;
+import com.obsinity.telemetry.annotations.Outcome;
 
 import com.obsinity.telemetry.dispatch.HandlerGroup;
 import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
@@ -157,8 +159,9 @@ class TelemetryErrorWildcardCoverageTest {
 	}
 
 	/**
-	 * Named handler for ok.gamma (success at finish) so global fallback at finish
-	 * does NOT fire for that flow.
+	 * Named handler for ok.gamma:
+	 *  - Success-specific handler claims (FLOW_FINISHED, SUCCESS).
+	 *  - Completed handler narrowed to FAILURE to avoid slot overlap by new rules.
 	 */
 	@EventReceiver
 	static class NormalReceivers {
@@ -170,6 +173,7 @@ class TelemetryErrorWildcardCoverageTest {
 		}
 
 		@OnFlowCompleted(name = "ok.gamma")
+		@OnOutcome(Outcome.FAILURE) // <-- narrow to FAILURE so it doesn't collide with the success handler
 		public void onGammaCompleted(TelemetryHolder h) {
 			// no-op
 		}

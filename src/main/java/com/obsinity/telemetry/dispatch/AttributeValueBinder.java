@@ -17,7 +17,7 @@ public final class AttributeValueBinder implements ParamBinder {
 	@Override
 	public Object bind(TelemetryHolder holder, Lifecycle phase, Throwable error) {
 		if (holder == null || holder.attributes() == null) return null;
-		Object raw = holder.attributes().asMap().get(key);
+		Object raw = holder.attributes().map().get(key);
 		return coerce(raw, targetType);
 	}
 

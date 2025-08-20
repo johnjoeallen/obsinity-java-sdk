@@ -9,10 +9,10 @@ import com.obsinity.telemetry.model.TelemetryHolder;
 final class AllAttrsBinder implements ParamBinder {
 	@Override
 	public Object bind(TelemetryHolder holder, Lifecycle phase, Throwable error) {
-		if (holder == null || holder.attributes() == null || holder.attributes().asMap() == null) {
+		if (holder == null || holder.attributes() == null || holder.attributes().map() == null) {
 			return new LinkedHashMap<>();
 		}
 		// Defensive copy so handlers can’t mutate the holder’s internal map
-		return new LinkedHashMap<>(holder.attributes().asMap());
+		return new LinkedHashMap<>(holder.attributes().map());
 	}
 }

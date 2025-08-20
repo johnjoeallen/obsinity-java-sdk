@@ -261,7 +261,7 @@ public class TelemetryProcessor {
 					: telemetryProcessorSupport.unixNanos(stepHolder.timestamp());
 
 			// Use clean step base name for the folded OEvent
-			String stepBaseName = String.valueOf(stepHolder.attributes().asMap().get("step.name"));
+			String stepBaseName = String.valueOf(stepHolder.attributes().map().get("step.name"));
 			if (stepBaseName == null || stepBaseName.isBlank()) {
 				final String routed = stepHolder.name();
 				int dot = (routed != null) ? routed.lastIndexOf('.') : -1;
