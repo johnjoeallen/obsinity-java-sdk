@@ -1,207 +1,199 @@
-# Obsinity Telemetry Developer Guide
+# Obsinity Telemetry — Combined Developer & Practical Guide
 
-## Annotation Reference
+---
+
+## Quick Primer
+
+* **Flows & steps:** Use `@Flow` to open a flow (root/subflow). Use `@Step` to advance work inside the open flow; if no flow is open, a step may auto-open one—guard with `@OrphanAlert`.&#x20;
+* **Scopes:** Narrow what a receiver can see using `@OnEventScope` (prefix/name, kind). Class-level scope can be refined at method level.&#x20;
+* **Lifecycle & outcomes:** Use class-level `@OnEventLifecycle` to decide which phases are even visible. Split success/failure with `@OnOutcome` or shorthands.&#x20;
+
+---
+
+## Annotation Reference (combined)
 
 ### Core (structure & selection)
 
-| Annotation           | Target         | Purpose                                                                                             |
-| -------------------- | -------------- | --------------------------------------------------------------------------------------------------- |
-| `@Flow`              | Method         | Starts a **flow** (root execution). Activates context so nested `@Step` calls become child events.  |
-| `@Step`              | Method         | Emits a **step** inside the active flow; auto‑promoted to a flow if none is active.                 |
-| `@Kind`              | Method / Class | Sets OTEL `SpanKind` (`SERVER`, `CLIENT`, `PRODUCER`, `CONSUMER`, `INTERNAL`).                      |
-| `@OrphanAlert`       | Method / Class | Controls log level when a `@Step` is auto‑promoted because no active `@Flow` exists.                |
-| `@OnEventLifecycle`  | **Class**      | Component‑level filter restricting **visible lifecycles** (e.g., `ROOT_FLOW_FINISHED`). Repeatable. |
-| `@OnEventLifecycles` | **Class**      | Container for multiple `@OnEventLifecycle` entries.                                                 |
-| `@OnEventScope`      | Method / Class | Declares name/prefix/kind filters (**scope**) for matching events.                                  |
-| `@OnEventScopes`     | Method / Class | Container for multiple `@OnEventScope` entries.                                                     |
+| Annotation                         | Target         | Purpose                                                                                                          |
+| ---------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `@Flow`                            | Method         | **Open a new flow** (root if none open, otherwise a subflow). Produces lifecycle signals for receivers.          |
+| `@Step`                            | Method         | **Advance within the open flow**; may auto-open if none active (pair with `@OrphanAlert`).                       |
+| `@Kind`                            | Method / Class | Set OTEL `SpanKind` (`SERVER`, `CLIENT`, `PRODUCER`, `CONSUMER`, `INTERNAL`).                                    |
+| `@OrphanAlert`                     | Method / Class | Control log level when a `@Step` auto-opens a flow.                                                              |
+| `@OnEventLifecycle`                | **Class**      | Restrict **visible lifecycles** for all handlers in a receiver. Repeatable via container. **Class-level only.**  |
+| `@OnEventScope` / `@OnEventScopes` | Method / Class | Name/prefix and `SpanKind` filter (**scope**). Class scope can be refined at method level.                       |
 
-### Flow receivers (flow‑centric handlers)
+### Flow receivers (flow-centric handlers)
 
-| Annotation            | Target | Purpose                                                                     |
-| --------------------- | ------ | --------------------------------------------------------------------------- |
-| `@EventReceiver`      | Class  | Marks a bean containing flow/step event handlers.                           |
-| `@OnFlowStarted`      | Method | Handle when a flow **starts** (exact name or prefix; alias `value`/`name`). |
-| `@OnFlowCompleted`    | Method | Handle when a matched flow **finishes** (success or failure).               |
-| `@OnFlowSuccess`      | Method | Handle only when a matched flow **succeeds**.                               |
-| `@OnFlowFailure`      | Method | Handle only when a matched flow **fails**; can bind the throwable.          |
-| `@OnFlowNotMatched`   | Method | Component‑scoped fallback when **no** `@OnFlow*` in this receiver matched.  |
-| `@GlobalFlowFallback` | Class  | Global fallback receiver when **no receiver in the app** matched a flow.    |
+| Annotation                          | Target | Purpose                                                                                                              |
+| ----------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------- |
+| `@EventReceiver`                    | Class  | Declares a bean containing flow handlers.                                                                            |
+| `@OnFlowStarted`                    | Method | Handle **flow start** (exact or prefix; supports `value`/`name` alias).                                              |
+| `@OnFlowCompleted`                  | Method | Handle **flow finish** (success or failure).                                                                         |
+| `@OnFlowSuccess` / `@OnFlowFailure` | Method | Outcome-specific shorthands for completed flows.                                                                     |
+| `@OnOutcome` / `@OnOutcomes`        | Method | Explicit success/failure filtering.                                                                                  |
+| `@OnFlowNotMatched`                 | Method | Receiver-scoped fallback when no `@OnFlow*` method matched after dot-chop. (**Replaces any blank selector usage.**)  |
+| `@GlobalFlowFallback`               | Class  | App-wide fallback when **no receiver** matched, including their `@OnFlowNotMatched`.                                 |
 
-### Outcome filtering
+### Attribute & context I/O (producer “push”)
 
-| Type / Annotation | Target | Purpose                                      |
-| ----------------- | ------ | -------------------------------------------- |
-| `enum Outcome`    | —      | `SUCCESS`, `FAILURE`.                        |
-| `@OnOutcome`      | Method | Restrict a handler to a single outcome.      |
-| `@OnOutcomes`     | Method | Container for multiple `@OnOutcome` entries. |
+| Annotation          | Target    | Purpose                                                                                 |
+| ------------------- | --------- | --------------------------------------------------------------------------------------- |
+| `@PushAttribute`    | Parameter | Save a parameter to **attributes** (persisted). Supports `value`/`name`, `omitIfNull`.  |
+| `@PushContextValue` | Parameter | Save a parameter to **event context** (ephemeral).                                      |
 
-### Attribute & context I/O (producer‑side “push”)
+### Parameter binding (consumer “pull”)
 
-| Annotation          | Target    | Purpose                                                                                                        |
-| ------------------- | --------- | -------------------------------------------------------------------------------------------------------------- |
-| `@PushAttribute`    | Parameter | Save a method parameter value into **attributes** (saved on the event). Supports `value`/`name`, `omitIfNull`. |
-| `@PushContextValue` | Parameter | Save a method parameter value into **event context** (ephemeral).                                              |
-
-### Parameter binding (consumer‑side “pull”)
-
-| Annotation              | Target    | Purpose                                                                 |
-| ----------------------- | --------- | ----------------------------------------------------------------------- |
-| `@PullAttribute`        | Parameter | Bind a single attribute key to the parameter (supports `value`/`name`). |
-| `@PullAllAttributes`    | Parameter | Bind the **entire attributes map** to the parameter.                    |
-| `@PullContextValue`     | Parameter | Bind a single event context key to the parameter.                       |
-| `@PullAllContextValues` | Parameter | Bind the **entire event context map** to the parameter.                 |
-| `@BindEventThrowable`   | Parameter | Bind the event’s `Throwable` (when present) to the parameter.           |
+| Annotation              | Target    | Purpose                                            |
+| ----------------------- | --------- | -------------------------------------------------- |
+| `@PullAttribute`        | Parameter | Bind a single attribute (supports `value`/`name`). |
+| `@PullAllAttributes`    | Parameter | Bind the full attributes map.                      |
+| `@PullContextValue`     | Parameter | Bind a single context value.                       |
+| `@PullAllContextValues` | Parameter | Bind the full context map.                         |
+| `@BindEventThrowable`   | Parameter | Bind the `Throwable` for failure outcomes.         |
 
 ### Preconditions (handler gating)
 
-| Annotation              | Target | Purpose                                                                            |
-| ----------------------- | ------ | ---------------------------------------------------------------------------------- |
-| `@RequiredAttributes`   | Method | Require one or more attribute keys be present **before** invoking the handler.     |
-| `@RequiredEventContext` | Method | Require one or more event context keys be present **before** invoking the handler. |
+| Annotation              | Target | Purpose                                         |
+| ----------------------- | ------ | ----------------------------------------------- |
+| `@RequiredAttributes`   | Method | Require attribute keys before invoking handler. |
+| `@RequiredEventContext` | Method | Require context keys before invoking handler.   |
 
 ---
 
-## Selection & Matching (dot‑chop, scope, lifecycle, kind)
+## Matching Model (name dot-chop, scope, lifecycle, outcome)
 
-**Name matching (dot‑chop):** handlers declared with a **prefix** match deeper names by chopping from the right:
-`a.b.c` → `a.b` → `a` → `""`.
-Declare a **blank** selector (`name=""`) to terminate the chain cleanly when using prefixes.
-
-**Scope filters (`@OnEventScope`):**
-
-* `prefix` / alias `value`/`name`: event name prefix or exact name.
-* `kind`: one or more `SpanKind` values; if set, only those kinds match.
-* May be placed on the **class** to scope all methods, and/or on individual methods for narrower filters.
-
-**Lifecycle filters (class level):** annotate the receiver class with `@OnEventLifecycle(LIFECYCLE)` (or `@OnEventLifecycles`) to constrain which lifecycles are even visible. Handlers inside will never see events outside this set (e.g., a receiver only for `ROOT_FLOW_FINISHED`).
-
-**Outcome filters:** use `@OnOutcome(Outcome.SUCCESS)` / `FAILURE` (or the flow‑specific shorthands `@OnFlowSuccess` / `@OnFlowFailure` / `@OnFlowCompleted`).
+1. **Scope first:** `@OnEventScope` (prefix/name, kind) limits what a receiver can even consider. Method-level scope refines (intersects) class scope.&#x20;
+2. **Lifecycle visibility:** `@OnEventLifecycle` at class level decides which phases are visible to that receiver’s methods.&#x20;
+3. **Name resolution (dot-chop):** try exact, then right-to-left prefix: `a.b.c` → `a.b` → `a` → *(empty)*. When it reaches empty, **invoke `@OnFlowNotMatched`** on that receiver (if present). **Do not** use `@OnFlow...("")`.&#x20;
+4. **Outcome:** further restrict using `@OnOutcome` or `@OnFlowSuccess` / `@OnFlowFailure` as needed.&#x20;
 
 ---
 
-## Handler Parameter Binding Cheat‑Sheet
+## Step-By-Step: From Zero to Useful Signals
 
-* Attributes: `@PullAttribute("user.id") String userId`, `@PullAllAttributes Map<String,Object> attrs`
-* Context: `@PullContextValue("session") Session s`, `@PullAllContextValues Map<String,Object> ctx`
-* Throwable (failures): `@BindEventThrowable IllegalStateException ex`
-* Kind/lifecycle aren’t parameters; set with `@Kind` (method/class), and `@OnEventLifecycle` on the **class**.
-* Producer push (from application code): `@PushAttribute("order.id") String id`, `@PushContextValue("tenant") String t`
-
----
-
-## Quick Rules to Avoid Startup Failures (updated)
-
-1. **Declare outcomes explicitly** on handlers that care about result: use `@OnOutcome`, or the shorthands `@OnFlowSuccess` / `@OnFlowFailure` / `@OnFlowCompleted` for flow receivers.
-2. For **each lifecycle** allowed on a receiver class, include a **blank selector** (`name = ""`) if you rely on dot‑chop fallback.
-3. **Do not duplicate** handlers with the **same** (lifecycle visibility via class + name/prefix + outcome set + method signature).
-4. If a handler expects a failure, declare exactly one `@BindEventThrowable` parameter typed to a `Throwable` (or subtype). Success‑only handlers should not declare it.
-5. Use `@RequiredAttributes` / `@RequiredEventContext` for gating — missing keys prevent invocation.
-6. When scoping at **class level** via `@OnEventScope`, remember method‑level scopes **refine** (intersect) the class scope.
-
----
-
-## Extended Examples
-
-### 1) Flow and steps with attributes/context (producer‑side)
+### 1) Open a flow (root or subflow) and save data
 
 ```java
-@Flow("checkout.start")
-@Kind(SpanKind.SERVER)
-public void startCheckout(
-    @PushAttribute("user.id") String userId,
-    @PushContextValue("session.id") String sessionId
-) {
-    // application code...
-}
+@Service
+public class CheckoutService {
 
-@Step("checkout.reserve")
-public void reserveInventory(@PushAttribute("sku") String sku) { /* ... */ }
-
-@Step("checkout.payment")
-@OrphanAlert(OrphanAlert.Level.WARN)
-public void processPayment(@PushAttribute("payment.method") String method) { /* ... */ }
-```
-
-### 2) Receiver with class‑level lifecycle + scope + outcomes
-
-```java
-@EventReceiver
-@OnEventScope(prefix = "checkout")            // receiver-wide scope
-@OnEventLifecycle(ROOT_FLOW_FINISHED)         // only see finished flows
-public class CheckoutReceiver {
-
-  @OnFlowStarted(name = "checkout.start")     // exact name, fires at flow start (if visible)
-  public void onStart(@PullAttribute("user.id") String userId) { /* ... */ }
-
-  @OnFlowStarted("checkout")                  // prefix, fires at start for any checkout.* flow
-  public void onAnyCheckoutStart(@PullAllAttributes Map<String,Object> attrs) { /* ... */ }
-
-  @OnFlowCompleted("checkout")                // success or failure at completion
-  @OnOutcome(Outcome.SUCCESS)
-  public void onAnyCheckoutSucceeded(@PullAllAttributes Map<String,Object> attrs) { /* ... */ }
-
-  @OnFlowCompleted("checkout")
-  @OnOutcome(Outcome.FAILURE)
-  public void onAnyCheckoutFailed(@BindEventThrowable Throwable ex,
-                                  @PullAllAttributes Map<String,Object> attrs) { /* ... */ }
-
-  @OnFlowNotMatched
-  public void nothingMatchedHere(String flowName) { /* optional impl-specific signature */ }
-}
-```
-
-### 3) Global fallback receiver
-
-```java
-@GlobalFlowFallback
-public class LastResortReceiver {
-
-  @OnFlowCompleted("") // blank selector as terminator
-  public void onAnyCompletion(@PullAllAttributes Map<String,Object> attrs) { /* ... */ }
-}
-```
-
-### 4) Preconditions
-
-```java
-@EventReceiver
-public class GuardedReceiver {
-
-  @OnFlowStarted("billing.charge")
-  @RequiredAttributes({"user.id", "amount"})
-  public void charge(@PullAttribute("user.id") String uid,
-                     @PullAttribute("amount") BigDecimal amount) { /* ... */ }
-
-  @OnEventLifecycle(ROOT_FLOW_FINISHED) // class-level on the receiver (or move receiver-wide)
-  public static class ChargeOutcomes {
-
-    @OnFlowCompleted("billing.charge")
-    @RequiredEventContext({"session.id"})
-    @OnOutcome(Outcome.FAILURE)
-    public void chargeFailed(@BindEventThrowable RuntimeException ex,
-                             @PullContextValue("session.id") String session) { /* ... */ }
+  @Flow("checkout.start")                // opens a flow (root/subflow)
+  @Kind(SpanKind.SERVER)
+  public void start(@PushAttribute("user.id") String userId,
+                    @PushContextValue("session.id") String sessionId) {
+    // app logic...
   }
 }
 ```
 
-### 5) Batch (root flow finished)
+**Achieves:** Opens `checkout.start`; attributes/context saved; lifecycle signals produced for receivers.&#x20;
+
+---
+
+### 2) Advance with steps (and guard auto-open)
 
 ```java
-@EventReceiver
-@OnEventLifecycle(ROOT_FLOW_FINISHED)
-public class RootBatchReceiver {
+@Service
+public class ReserveAndPay {
 
-  @OnFlowCompleted("rootFlow")
-  public void onRootDone(List<TelemetryHolder> flows) { /* batch */ }
+  @Step("checkout.reserve")
+  public void reserve(@PushAttribute("sku") String sku) { /* ... */ }
 
-  @OnFlowCompleted("rootFlow")
-  @OnOutcome(Outcome.FAILURE)
-  public void onAnyRootFailure(@BindEventThrowable Exception ex,
-                               TelemetryHolder holder) { /* ... */ }
+  @Step("checkout.payment")
+  @OrphanAlert(OrphanAlert.Level.WARN) // warns if no flow and a new one is auto-opened
+  public void pay(@PushAttribute("payment.method") String method) { /* ... */ }
 }
 ```
 
-### 6) Programmatic API (push without annotations)
+**Achieves:** Child signals within the open flow; orphan guard if a step would auto-open.&#x20;
+
+---
+
+### 3) Subflow within a parent flow
+
+```java
+@Service
+@RequiredArgsConstructor
+public class OrderOrchestrator {
+  private final CheckoutService checkout;
+  private final RiskService risk;
+
+  @Flow("orders.place")  // parent flow
+  public void place(String userId, String session, String sku, String method) {
+    checkout.start(userId, session); // runs inside parent flow
+    risk.assess(userId);             // opens a subflow
+  }
+}
+
+@Service
+class RiskService {
+  @Flow("risk.assess")   // becomes a subflow since a flow is open
+  public void assess(@PushAttribute("user.id") String uid) { /* ... */ }
+}
+```
+
+**Achieves:** Shows `@Flow` as root or subflow based on context.&#x20;
+
+---
+
+### 4) Observe starts, finishes, outcomes — plus fallback
+
+```java
+@EventReceiver
+@OnEventScope(prefix = "checkout")                 // receiver-wide scope
+@OnEventLifecycle(ROOT_FLOW_FINISHED)              // only finished flows visible
+public class CheckoutReceivers {
+
+  @OnFlowStarted(name = "checkout.start")          // exact start
+  public void onStart(@PullAttribute("user.id") String userId) { /* ... */ }
+
+  @OnFlowCompleted("checkout") @OnOutcome(Outcome.SUCCESS)
+  public void onSuccess(@PullAllAttributes Map<String,Object> attrs) { /* ... */ }
+
+  @OnFlowCompleted("checkout") @OnOutcome(Outcome.FAILURE)
+  public void onFailure(@BindEventThrowable Throwable ex,
+                        @PullAllAttributes Map<String,Object> attrs) { /* ... */ }
+
+  @OnFlowNotMatched                                     // terminal inside this receiver
+  public void localFallback(String flowName) { /* ... */ }
+}
+```
+
+**Achieves:** Scoped, lifecycle-aware handlers with outcome splitting and a clean local fallback.&#x20;
+
+---
+
+### 5) Guards & failure-only with bound throwable
+
+```java
+@EventReceiver
+public class ChargeGuards {
+
+  @OnFlowStarted("billing.charge")
+  @RequiredAttributes({"user.id", "amount"})
+  public void begin(@PullAttribute("user.id") String uid,
+                    @PullAttribute("amount") long cents) { /* ... */ }
+
+  @OnEventLifecycle(ROOT_FLOW_FINISHED)
+  public static class Endings {
+    @OnFlowCompleted("billing.charge")
+    @OnOutcome(Outcome.FAILURE)
+    @RequiredEventContext({"session.id"})
+    public void failed(@BindEventThrowable IllegalStateException ex,
+                       @PullContextValue("session.id") String session) { /* ... */ }
+
+    @OnFlowNotMatched
+    public void endingsFallback(String flowName) { /* ... */ }
+  }
+}
+```
+
+**Achieves:** Strict preconditions; failure-only handling with throwable binding; scoped fallback.&#x20;
+
+---
+
+### 6) Programmatic “push” (no param annotations)
 
 ```java
 @Service
@@ -218,54 +210,109 @@ class PaymentService {
 }
 ```
 
+**Achieves:** Same effect as `@Push*` annotations, but explicit via API.&#x20;
+
 ---
 
-## Lifecycle Diagram
+## Combination Cookbook (ready-to-drop patterns)
 
+### A) Class lifecycle + scope + outcome split + throwable + fallback
+
+```java
+@EventReceiver
+@OnEventScope(prefix = "checkout")
+@OnEventLifecycle(ROOT_FLOW_FINISHED)
+public class CheckoutOutcomes {
+
+  @OnFlowSuccess("checkout")
+  public void ok(@PullAllAttributes Map<String,Object> attrs) { /* metrics */ }
+
+  @OnFlowFailure("checkout")
+  public void fail(@BindEventThrowable RuntimeException ex,
+                   @PullAllAttributes Map<String,Object> attrs) { /* alerting */ }
+
+  @OnFlowNotMatched
+  public void localFallback(String flowName) { /* audit */ }
+}
 ```
-@Flow/@Step entry
-  ↓
-Save values (push annotations or telemetry.put*)
-  ↓
-Emit event
-  ↓
-Dispatcher: class lifecycle filter → scope (class+method) → name (exact or dot-chop) → outcome
-  ↓
-SUCCESS path: SUCCESS → ALWAYS
-FAILURE path: FAILURE → ALWAYS
-  ↓
-Parameter binding (pull annotations, Throwable injection)
-  ↓
-Attributes saved; context discarded at scope end
+
+---
+
+### B) Multiple scopes at class level + method refinement
+
+```java
+@EventReceiver
+@OnEventScopes({
+  @OnEventScope(prefix = "billing"),
+  @OnEventScope(prefix = "refunds", kind = {SERVER, CONSUMER})
+})
+@OnEventLifecycle(ROOT_FLOW_FINISHED)
+public class BillingAndRefunds {
+
+  @OnFlowCompleted("billing.payment")
+  @OnOutcome(Outcome.SUCCESS)
+  public void paymentOk(@PullAllAttributes Map<String,Object> attrs) { /* ... */ }
+
+  @OnFlowCompleted("refunds")
+  @OnEventScope(kind = CONSUMER)  // refine to CONSUMER
+  @OnOutcome(Outcome.FAILURE)
+  public void refundFailed(@BindEventThrowable Throwable ex,
+                           @PullContextValue("session.id") String session) { /* ... */ }
+
+  @OnFlowNotMatched
+  public void refundsFallback(String flowName) { /* ... */ }
+}
 ```
 
 ---
 
-## OTEL `SpanKind` Reference
+### C) Local vs Global fallback
 
-| SpanKind   | Use when…                               | Examples                                       |
-| ---------- | --------------------------------------- | ---------------------------------------------- |
-| `SERVER`   | Handles an **incoming** request/message | HTTP controller, gRPC server, message consumer |
-| `CLIENT`   | Makes an **outgoing** request           | HTTP/gRPC client, external API, DB driver      |
-| `PRODUCER` | Publishes to a broker/topic/queue       | Kafka/RabbitMQ/SNS send                        |
-| `CONSUMER` | Receives/processes a brokered message   | Kafka poll, RabbitMQ listener, SQS handler     |
-| `INTERNAL` | Performs in‑process work                | Cache recompute, rule evaluation, CPU step     |
+```java
+@EventReceiver
+@OnEventScope(prefix = "inventory")
+public class InventoryReceiver {
+
+  @OnFlowSuccess("inventory.restock")
+  public void restockOk(@PullAllAttributes Map<String,Object> attrs) { /* ... */ }
+
+  @OnFlowNotMatched // handles inventory.* misses inside this receiver
+  public void inventoryFallback(String flowName) { /* ... */ }
+}
+
+@GlobalFlowFallback
+public class LastResort {
+  public void capture(String flowName, @PullAllAttributes Map<String,Object> attrs) { /* ... */ }
+}
+```
 
 ---
 
-## Notes & Terminology
+## OTEL `SpanKind` Cheat-Sheet
 
-* **Attributes** = saved key/values on the event (carry through serialization / storage).
-* **Event context** = ephemeral key/values for in‑process enrichment and handler binding; not saved.
-* **Dot‑chop** = right‑to‑left name reduction to find a handler when using prefixes.
-* **Receiver scopes** (`@OnEventScope` at class level) reduce the candidate space; method scopes further reduce it.
-* **Outcome** replaces earlier “mode” concepts; use `SUCCESS`/`FAILURE` semantics via `@OnOutcome` or flow shorthands.
+| SpanKind   | Use when…                                | Examples                                       |   |
+| ---------- | ---------------------------------------- | ---------------------------------------------- | - |
+| `SERVER`   | Handling an **incoming** request/message | HTTP controller, gRPC server, message consumer |   |
+| `CLIENT`   | Making an **outgoing** call              | HTTP/gRPC client, external API, DB driver      |   |
+| `PRODUCER` | Publishing to a broker                   | Kafka/RabbitMQ/SNS send                        |   |
+| `CONSUMER` | Receiving from a broker                  | Kafka poll, RabbitMQ listener, SQS handler     |   |
+| `INTERNAL` | Pure in-process work                     | Cache recompute, rule evaluation               |   |
 
 ---
 
-## Troubleshooting
+## Troubleshooting (consolidated)
 
-* **Handler never fires** → Check lifecycle visibility (class), outcome filters, and scopes; ensure a blank selector exists when relying on dot‑chop.
-* **Parameter nulls** → Verify key names for `@PullAttribute`/`@PullContextValue`; use the `PullAll*` binders to inspect inputs.
-* **Multiple matches** → Remove duplicates (same lifecycle visibility + selector + outcome set + signature). Keep one or differentiate parameters.
-* **Throwable missing** → The event was successful; don’t declare `@BindEventThrowable` on success‑only handlers.
+* **Handler never fires:** Check **class lifecycle** (`@OnEventLifecycle`), **scopes** (`@OnEventScope`), and outcome filters. If name resolution dot-chops to empty, ensure the receiver has **`@OnFlowNotMatched`**.&#x20;
+* **Out-of-scope events:** A receiver’s `@OnFlowNotMatched` does **not** trigger for events outside its class/method scope or lifecycle—this is by design.&#x20;
+* **Null parameters:** Verify keys for `@PullAttribute` / `@PullContextValue`; temporarily bind with `@PullAllAttributes` / `@PullAllContextValues` to inspect.&#x20;
+* **Duplicate handling:** Avoid multiple methods with identical lifecycle visibility + selector + outcome set + signature.
+* **Throwable missing on “failure” path:** Ensure the handler actually filters for failure (`@OnOutcome(FAILURE)` or `@OnFlowFailure`) and declares a single `@BindEventThrowable` parameter.&#x20;
+
+---
+
+## Appendix — Aliases & Terminology
+
+* Many annotations support `value`/`name` aliases (e.g., `@OnFlowStarted("x")` ≡ `@OnFlowStarted(name="x")`; `@PushAttribute("k")` ≡ `@PushAttribute(name="k")`).&#x20;
+* **Attributes** = persisted key/values on the event. **Event context** = ephemeral, for in-process binding. **Dot-chop** = right-to-left name reduction used when matching prefixes.&#x20;
+
+---
