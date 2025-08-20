@@ -1,318 +1,252 @@
-# Obsinity Telemetry — Combined Developer & Practical Guide
+# Obsinity Telemetry Developer Guide (Full, regenerated)
 
 ---
 
-## Quick Primer
+## Cheat Sheet
 
-* **Flows & steps:** Use `@Flow` to open a flow (root/subflow). Use `@Step` to advance work inside the open flow; if no flow is open, a step may auto-open one—guard with `@OrphanAlert`.&#x20;
-* **Scopes:** Narrow what a receiver can see using `@OnEventScope` (prefix/name, kind). Class-level scope can be refined at method level.&#x20;
-* **Lifecycle & outcomes:** Use class-level `@OnEventLifecycle` to decide which phases are even visible. Split success/failure with `@OnOutcome` or shorthands.&#x20;
+* **`@Flow`** — starts a new flow (root or subflow); **sends** lifecycle signals: started, completed, failed.
+* **`@Step`** — **records** a step inside the current flow; auto‑promoted to a flow when no flow is active.
+* **`@Kind`** — sets OTEL `SpanKind` (`SERVER`, `CLIENT`, `PRODUCER`, `CONSUMER`, `INTERNAL`).
+* **`@OnEvent`** — declares an event handler; filter by name/prefix, lifecycle, kind, throwable filters, and **mode**.
+* **`@OnOutcome`** — handler hook that runs once per flow outcome (SUCCESS or FAILURE); ideal for sinks/taps.
+* **`@PushAttribute`** — client‑side: **save** a parameter into event attributes.
+* **`@PullAttribute`** — handler‑side: read a **saved** attribute into a parameter.
+* **`@PullContextValue`** — handler‑side: read a transient context value from the event context.
+* **Modes** — `SUCCESS`, `FAILURE`.
+* **Unmatched** — no blank selector; when dot‑chop ends empty, call **`@FlowNotMatched`**.
 
 ---
 
-## Annotation Reference (combined)
+## Step‑by‑Step Examples
+
+### 1) Hello Flow — minimal producer
+
+```java
+@Flow(name = "demo.hello")
+public void hello(@PushAttribute(name = "user.id") String userId) {
+  // business logic
+}
+```
+
+**What happens**
+
+1. A new flow starts (ROOT or subflow depending on context) and **sends** `FLOW_STARTED`.
+2. Attribute `user.id` is **saved** on the flow.
+3. On return, `FLOW_FINISHED` is **sent** (SUCCESS or FAILURE based on exceptions).
+
+---
+
+### 2) Flow with steps and attribute/context saving
+
+```java
+@Flow(name = "order.create")
+public String createOrder(
+  @PushAttribute(name = "user.id") String userId,
+  @PushAttribute(name = "order.total") BigDecimal total
+) {
+  verifyUser(userId);
+  String reservationId = reserveInventory();
+  TelemetryContext.putContext("reservation.id", reservationId); // transient
+  return reservationId;
+}
+
+@Step(name = "verify.user")
+void verifyUser(String userId) { /* record validation */ }
+
+@Step(name = "reserve.inventory")
+String reserveInventory() { /* record reservation */ return UUID.randomUUID().toString(); }
+```
+
+**Notes**
+
+* `@Step` **records** child work. If no active flow, the step is auto‑promoted (see `@OrphanAlert`).
+* Anything you **save** via `@PushAttribute` or `TelemetryContext.putAttr(...)` becomes available to handlers.
+* Context via `TelemetryContext.putContext(...)` is transient and bindable with `@PullContextValue`.
+
+---
+
+### 3) Auto‑promoted step (no active flow)
+
+```java
+@Step(name = "cache.warmup")
+void warmup() { /* will auto‑promote to a flow if called stand‑alone */ }
+```
+
+**Tip**: Use `@OrphanAlert` to tune the log level when promotion occurs.
+
+---
+
+### 4) Handling SUCCESS vs FAILURE
+
+```java
+@TelemetryEventHandler
+class OrderHandlers {
+
+  @OnEvent(prefix = "order.", lifecycle = Lifecycle.FLOW_FINISHED, mode = Mode.SUCCESS)
+  void onSucceeded(@PullAttribute("user.id") String userId, @AllAttrs Map<String,Object> attrs) {
+    // write to storage, publish metrics, etc.
+  }
+
+  @OnEvent(prefix = "order.", lifecycle = Lifecycle.FLOW_FINISHED, mode = Mode.FAILURE)
+  void onFailed(@Err Throwable error, @PullAttribute("user.id") String userId) {
+    // alert, dead-letter, retry planning, etc.
+  }
+}
+```
+
+**Guidance**: Prefer **separate** handlers for success and failure.
+
+---
+
+### 5) One hook for either outcome — `@OnOutcome`
+
+```java
+@TelemetryEventHandler
+class OutcomeTaps {
+  @OnOutcome(prefix = "order.")
+  void shipToTimeseries(@PullAttribute("user.id") String userId,
+                        @AllAttrs Map<String,Object> attrs,
+                        Outcome outcome) { // Outcome.SUCCESS or Outcome.FAILURE
+    // idempotent sink; runs once per flow completion regardless of outcome
+  }
+}
+```
+
+**When to use**: cross‑cutting sinks/taps (e.g., ship to time‑series, audit) where duplication must be avoided and both outcomes matter.
+
+---
+
+### 6) Prefix matching (dot‑chop) without blank selector
+
+```java
+@TelemetryEventHandler
+class BillingHandlers {
+  @OnEvent(name = "billing.invoice.paid", lifecycle = Lifecycle.FLOW_FINISHED, mode = Mode.SUCCESS)
+  void onInvoicePaid(/* ... */) { }
+
+  @OnEvent(prefix = "billing.invoice", lifecycle = Lifecycle.FLOW_FINISHED, mode = Mode.FAILURE)
+  void onAnyInvoiceFailure(@Err Throwable err) { }
+}
+```
+
+**Resolution order** for `billing.invoice.paid`: try exact, then `billing.invoice`, then `billing`. If nothing matches, it’s *not matched*.
+
+---
+
+### 7) Binding parameters cleanly
+
+```java
+@TelemetryEventHandler
+class BindExamples {
+  @OnEvent(name = "order.create", lifecycle = Lifecycle.FLOW_FINISHED, mode = Mode.SUCCESS)
+  void bindAll(@PullAttribute("user.id") String userId,
+               @AllAttrs Map<String,Object> attrs,
+               @PullContextValue("reservation.id") String reservationId) { }
+
+  @OnEvent(prefix = "order.", lifecycle = Lifecycle.FLOW_FINISHED, mode = Mode.FAILURE)
+  void bindError(@Err Throwable error) { }
+}
+```
+
+---
+
+### 8) Unmatched flows — `@FlowNotMatched`
+
+```java
+@TelemetryEventHandler
+class Fallbacks {
+  @FlowNotMatched
+  void onUnmatched(String flowName) {
+    // central diagnostic when no handler matched after dot‑chop
+  }
+}
+```
+
+---
+
+## Annotation Reference (concise)
 
 ### Core (structure & selection)
 
-| Annotation                         | Target         | Purpose                                                                                                          |
-| ---------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `@Flow`                            | Method         | **Open a new flow** (root if none open, otherwise a subflow). Produces lifecycle signals for receivers.          |
-| `@Step`                            | Method         | **Advance within the open flow**; may auto-open if none active (pair with `@OrphanAlert`).                       |
-| `@Kind`                            | Method / Class | Set OTEL `SpanKind` (`SERVER`, `CLIENT`, `PRODUCER`, `CONSUMER`, `INTERNAL`).                                    |
-| `@OrphanAlert`                     | Method / Class | Control log level when a `@Step` auto-opens a flow.                                                              |
-| `@OnEventLifecycle`                | **Class**      | Restrict **visible lifecycles** for all handlers in a receiver. Repeatable via container. **Class-level only.**  |
-| `@OnEventScope` / `@OnEventScopes` | Method / Class | Name/prefix and `SpanKind` filter (**scope**). Class scope can be refined at method level.                       |
+* **`@Flow`** — starts a **flow**; **sends** lifecycle signals.
+* **`@Step`** — **records** a step inside the active flow; auto‑promotes when needed.
+* **`@Kind`** — sets OTEL `SpanKind`; default `INTERNAL`.
+* **`@OnEvent`** — handler selection by name/prefix, lifecycle, kind, throwable filters, and **mode**.
+* **`@OnOutcome`** — runs once at flow completion for either outcome; provides `Outcome` to the method.
+* **`@TelemetryEventHandler`** — marks a handler class for scanning and validation.
+* **`@OrphanAlert`** — controls log level for auto‑promoted steps.
 
-### Flow receivers (flow-centric handlers)
+### Modes
 
-| Annotation                          | Target | Purpose                                                                                                              |
-| ----------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------- |
-| `@EventReceiver`                    | Class  | Declares a bean containing flow handlers.                                                                            |
-| `@OnFlowStarted`                    | Method | Handle **flow start** (exact or prefix; supports `value`/`name` alias).                                              |
-| `@OnFlowCompleted`                  | Method | Handle **flow finish** (success or failure).                                                                         |
-| `@OnFlowSuccess` / `@OnFlowFailure` | Method | Outcome-specific shorthands for completed flows.                                                                     |
-| `@OnOutcome` / `@OnOutcomes`        | Method | Explicit success/failure filtering.                                                                                  |
-| `@OnFlowNotMatched`                 | Method | Receiver-scoped fallback when no `@OnFlow*` method matched after dot-chop. (**Replaces any blank selector usage.**)  |
-| `@GlobalFlowFallback`               | Class  | App-wide fallback when **no receiver** matched, including their `@OnFlowNotMatched`.                                 |
+* **`SUCCESS`** — event completed without error.
+* **`FAILURE`** — event ended with an exception; bind it via `@Err`.
 
-### Attribute & context I/O (producer “push”)
+### Lifecycle
 
-| Annotation          | Target    | Purpose                                                                                 |
-| ------------------- | --------- | --------------------------------------------------------------------------------------- |
-| `@PushAttribute`    | Parameter | Save a parameter to **attributes** (persisted). Supports `value`/`name`, `omitIfNull`.  |
-| `@PushContextValue` | Parameter | Save a parameter to **event context** (ephemeral).                                      |
+`ROOT_FLOW_STARTED`, `FLOW_STARTED`, `STEP_STARTED`, `STEP_FINISHED`, `FLOW_FINISHED`, `ROOT_FLOW_FINISHED`.
 
-### Parameter binding (consumer “pull”)
-
-| Annotation              | Target    | Purpose                                            |
-| ----------------------- | --------- | -------------------------------------------------- |
-| `@PullAttribute`        | Parameter | Bind a single attribute (supports `value`/`name`). |
-| `@PullAllAttributes`    | Parameter | Bind the full attributes map.                      |
-| `@PullContextValue`     | Parameter | Bind a single context value.                       |
-| `@PullAllContextValues` | Parameter | Bind the full context map.                         |
-| `@BindEventThrowable`   | Parameter | Bind the `Throwable` for failure outcomes.         |
-
-### Preconditions (handler gating)
-
-| Annotation              | Target | Purpose                                         |
-| ----------------------- | ------ | ----------------------------------------------- |
-| `@RequiredAttributes`   | Method | Require attribute keys before invoking handler. |
-| `@RequiredEventContext` | Method | Require context keys before invoking handler.   |
+> `OnEventLifecycle` applies at **class level**.
 
 ---
 
-## Matching Model (name dot-chop, scope, lifecycle, outcome)
+## Handler Selection & Routing
 
-1. **Scope first:** `@OnEventScope` (prefix/name, kind) limits what a receiver can even consider. Method-level scope refines (intersects) class scope.&#x20;
-2. **Lifecycle visibility:** `@OnEventLifecycle` at class level decides which phases are visible to that receiver’s methods.&#x20;
-3. **Name resolution (dot-chop):** try exact, then right-to-left prefix: `a.b.c` → `a.b` → `a` → *(empty)*. When it reaches empty, **invoke `@OnFlowNotMatched`** on that receiver (if present). **Do not** use `@OnFlow...("")`.&#x20;
-4. **Outcome:** further restrict using `@OnOutcome` or `@OnFlowSuccess` / `@OnFlowFailure` as needed.&#x20;
-
----
-
-## Step-By-Step: From Zero to Useful Signals
-
-### 1) Open a flow (root or subflow) and save data
-
-```java
-@Service
-public class CheckoutService {
-
-  @Flow("checkout.start")                // opens a flow (root/subflow)
-  @Kind(SpanKind.SERVER)
-  public void start(@PushAttribute("user.id") String userId,
-                    @PushContextValue("session.id") String sessionId) {
-    // app logic...
-  }
-}
-```
-
-**Achieves:** Opens `checkout.start`; attributes/context saved; lifecycle signals produced for receivers.&#x20;
+* **Dot‑chop prefix matching**: `a.b.c` → try `a.b.c`, then `a.b`, then `a`.
+* **No blank selector**: once the chop ends empty, treat as *not matched* → `@FlowNotMatched`.
+* **No wildcard mixing**: prefer explicit prefixes + `mode`.
+* **Validation**: the scope/handler validator rejects invalid intersections and mixed unmatched strategies.
 
 ---
 
-### 2) Advance with steps (and guard auto-open)
+## Flow & Step Semantics
 
-```java
-@Service
-public class ReserveAndPay {
-
-  @Step("checkout.reserve")
-  public void reserve(@PushAttribute("sku") String sku) { /* ... */ }
-
-  @Step("checkout.payment")
-  @OrphanAlert(OrphanAlert.Level.WARN) // warns if no flow and a new one is auto-opened
-  public void pay(@PushAttribute("payment.method") String method) { /* ... */ }
-}
-```
-
-**Achieves:** Child signals within the open flow; orphan guard if a step would auto-open.&#x20;
+* `@Flow` **sends** multiple lifecycle signals; may be root or subflow.
+* `@Step` **records** child work; step attributes/context carry into the resulting event.
+* Auto‑promotion occurs when a step runs without an active flow; govern logs with `@OrphanAlert`.
 
 ---
 
-### 3) Subflow within a parent flow
+## Parameter Binding
 
-```java
-@Service
-@RequiredArgsConstructor
-public class OrderOrchestrator {
-  private final CheckoutService checkout;
-  private final RiskService risk;
-
-  @Flow("orders.place")  // parent flow
-  public void place(String userId, String session, String sku, String method) {
-    checkout.start(userId, session); // runs inside parent flow
-    risk.assess(userId);             // opens a subflow
-  }
-}
-
-@Service
-class RiskService {
-  @Flow("risk.assess")   // becomes a subflow since a flow is open
-  public void assess(@PushAttribute("user.id") String uid) { /* ... */ }
-}
-```
-
-**Achieves:** Shows `@Flow` as root or subflow based on context.&#x20;
+* **Write** (producer): `@PushAttribute(name|value = "key")` or `TelemetryContext.putAttr(...)` to **save** attributes.
+* **Read** (handler): `@PullAttribute`, `@AllAttrs`, `@PullContextValue`, and `@Err` for exceptions.
+* **Aliases**: `@Attr` and `@Attribute(name = "...")` for handler parameters.
 
 ---
 
-### 4) Observe starts, finishes, outcomes — plus fallback
+## Error Handling & Fallbacks
 
-```java
-@EventReceiver
-@OnEventScope(prefix = "checkout")                 // receiver-wide scope
-@OnEventLifecycle(ROOT_FLOW_FINISHED)              // only finished flows visible
-public class CheckoutReceivers {
-
-  @OnFlowStarted(name = "checkout.start")          // exact start
-  public void onStart(@PullAttribute("user.id") String userId) { /* ... */ }
-
-  @OnFlowCompleted("checkout") @OnOutcome(Outcome.SUCCESS)
-  public void onSuccess(@PullAllAttributes Map<String,Object> attrs) { /* ... */ }
-
-  @OnFlowCompleted("checkout") @OnOutcome(Outcome.FAILURE)
-  public void onFailure(@BindEventThrowable Throwable ex,
-                        @PullAllAttributes Map<String,Object> attrs) { /* ... */ }
-
-  @OnFlowNotMatched                                     // terminal inside this receiver
-  public void localFallback(String flowName) { /* ... */ }
-}
-```
-
-**Achieves:** Scoped, lifecycle-aware handlers with outcome splitting and a clean local fallback.&#x20;
+* Prefer **separate** SUCCESS/FAILURE handlers.
+* Use **`@OnOutcome`** for a single, once‑per‑flow hook that applies to both outcomes.
+* A global fallback receiver records a diagnostic when **no** handler ran.
 
 ---
 
-### 5) Guards & failure-only with bound throwable
+## OTEL Mapping & Compatibility
 
-```java
-@EventReceiver
-public class ChargeGuards {
-
-  @OnFlowStarted("billing.charge")
-  @RequiredAttributes({"user.id", "amount"})
-  public void begin(@PullAttribute("user.id") String uid,
-                    @PullAttribute("amount") long cents) { /* ... */ }
-
-  @OnEventLifecycle(ROOT_FLOW_FINISHED)
-  public static class Endings {
-    @OnFlowCompleted("billing.charge")
-    @OnOutcome(Outcome.FAILURE)
-    @RequiredEventContext({"session.id"})
-    public void failed(@BindEventThrowable IllegalStateException ex,
-                       @PullContextValue("session.id") String session) { /* ... */ }
-
-    @OnFlowNotMatched
-    public void endingsFallback(String flowName) { /* ... */ }
-  }
-}
-```
-
-**Achieves:** Strict preconditions; failure-only handling with throwable binding; scoped fallback.&#x20;
+* **Span mapping**: `@Flow` ↔ span (root/sub); `@Step` ↔ child span (or flow when auto‑promoted).
+* **Kind**: `@Kind` → `SpanKind`; default `INTERNAL`.
+* **Context propagation**: bridge thread‑locals ↔ OTEL Context.
+* **Receivers**: OTLP ingestion can be translated into internal events.
 
 ---
 
-### 6) Programmatic “push” (no param annotations)
+## Spring Integration (brief)
 
-```java
-@Service
-@RequiredArgsConstructor
-class PaymentService {
-  private final TelemetryProcessorSupport telemetry;
-
-  @Step(name = "payment.charge")
-  public void charge(String userId, long amountCents) {
-    telemetry.putAttr("user.id", userId);
-    telemetry.putAttr("amount.cents", amountCents);
-    telemetry.putContext("retry", false);
-  }
-}
-```
-
-**Achieves:** Same effect as `@Push*` annotations, but explicit via API.&#x20;
+* Interceptors around `@Flow`/`@Step` to handle start/finish and attribute saving.
+* Scanning of `@TelemetryEventHandler`; registration of `@OnEvent`/`@OnOutcome` methods.
+* A validator runner ensures scopes/handlers are consistent after scanning.
 
 ---
 
-## Combination Cookbook (ready-to-drop patterns)
+## Configuration Keys (stable)
 
-### A) Class lifecycle + scope + outcome split + throwable + fallback
+* `obsinity.flow.orphan-alert` — default log level for auto‑promoted steps.
+* `obsinity.handlers.validation.strict` — enable strict validation.
+* `obsinity.storage.retention.days` — retention window.
+* `obsinity.partitions.rotate.cron` — rotation schedule.
+* `obsinity.export.otlp.*` — OTLP exporter options.
 
-```java
-@EventReceiver
-@OnEventScope(prefix = "checkout")
-@OnEventLifecycle(ROOT_FLOW_FINISHED)
-public class CheckoutOutcomes {
-
-  @OnFlowSuccess("checkout")
-  public void ok(@PullAllAttributes Map<String,Object> attrs) { /* metrics */ }
-
-  @OnFlowFailure("checkout")
-  public void fail(@BindEventThrowable RuntimeException ex,
-                   @PullAllAttributes Map<String,Object> attrs) { /* alerting */ }
-
-  @OnFlowNotMatched
-  public void localFallback(String flowName) { /* audit */ }
-}
-```
-
----
-
-### B) Multiple scopes at class level + method refinement
-
-```java
-@EventReceiver
-@OnEventScopes({
-  @OnEventScope(prefix = "billing"),
-  @OnEventScope(prefix = "refunds", kind = {SERVER, CONSUMER})
-})
-@OnEventLifecycle(ROOT_FLOW_FINISHED)
-public class BillingAndRefunds {
-
-  @OnFlowCompleted("billing.payment")
-  @OnOutcome(Outcome.SUCCESS)
-  public void paymentOk(@PullAllAttributes Map<String,Object> attrs) { /* ... */ }
-
-  @OnFlowCompleted("refunds")
-  @OnEventScope(kind = CONSUMER)  // refine to CONSUMER
-  @OnOutcome(Outcome.FAILURE)
-  public void refundFailed(@BindEventThrowable Throwable ex,
-                           @PullContextValue("session.id") String session) { /* ... */ }
-
-  @OnFlowNotMatched
-  public void refundsFallback(String flowName) { /* ... */ }
-}
-```
-
----
-
-### C) Local vs Global fallback
-
-```java
-@EventReceiver
-@OnEventScope(prefix = "inventory")
-public class InventoryReceiver {
-
-  @OnFlowSuccess("inventory.restock")
-  public void restockOk(@PullAllAttributes Map<String,Object> attrs) { /* ... */ }
-
-  @OnFlowNotMatched // handles inventory.* misses inside this receiver
-  public void inventoryFallback(String flowName) { /* ... */ }
-}
-
-@GlobalFlowFallback
-public class LastResort {
-  public void capture(String flowName, @PullAllAttributes Map<String,Object> attrs) { /* ... */ }
-}
-```
-
----
-
-## OTEL `SpanKind` Cheat-Sheet
-
-| SpanKind   | Use when…                                | Examples                                       |   |
-| ---------- | ---------------------------------------- | ---------------------------------------------- | - |
-| `SERVER`   | Handling an **incoming** request/message | HTTP controller, gRPC server, message consumer |   |
-| `CLIENT`   | Making an **outgoing** call              | HTTP/gRPC client, external API, DB driver      |   |
-| `PRODUCER` | Publishing to a broker                   | Kafka/RabbitMQ/SNS send                        |   |
-| `CONSUMER` | Receiving from a broker                  | Kafka poll, RabbitMQ listener, SQS handler     |   |
-| `INTERNAL` | Pure in-process work                     | Cache recompute, rule evaluation               |   |
-
----
-
-## Troubleshooting (consolidated)
-
-* **Handler never fires:** Check **class lifecycle** (`@OnEventLifecycle`), **scopes** (`@OnEventScope`), and outcome filters. If name resolution dot-chops to empty, ensure the receiver has **`@OnFlowNotMatched`**.&#x20;
-* **Out-of-scope events:** A receiver’s `@OnFlowNotMatched` does **not** trigger for events outside its class/method scope or lifecycle—this is by design.&#x20;
-* **Null parameters:** Verify keys for `@PullAttribute` / `@PullContextValue`; temporarily bind with `@PullAllAttributes` / `@PullAllContextValues` to inspect.&#x20;
-* **Duplicate handling:** Avoid multiple methods with identical lifecycle visibility + selector + outcome set + signature.
-* **Throwable missing on “failure” path:** Ensure the handler actually filters for failure (`@OnOutcome(FAILURE)` or `@OnFlowFailure`) and declares a single `@BindEventThrowable` parameter.&#x20;
-
----
-
-## Appendix — Aliases & Terminology
-
-* Many annotations support `value`/`name` aliases (e.g., `@OnFlowStarted("x")` ≡ `@OnFlowStarted(name="x")`; `@PushAttribute("k")` ≡ `@PushAttribute(name="k")`).&#x20;
-* **Attributes** = persisted key/values on the event. **Event context** = ephemeral, for in-process binding. **Dot-chop** = right-to-left name reduction used when matching prefixes.&#x20;
+> **Note:** This guide intentionally **omits SQL** and build/module details.
 
 ---
