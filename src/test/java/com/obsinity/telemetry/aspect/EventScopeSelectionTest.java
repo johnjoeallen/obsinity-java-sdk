@@ -18,7 +18,7 @@ import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
 import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.Flow;
-import com.obsinity.telemetry.annotations.OnEventLifecycle;
+import com.obsinity.telemetry.annotations.OnFlowLifecycle;
 import com.obsinity.telemetry.annotations.OnEventScope;
 import com.obsinity.telemetry.annotations.OnFlowFailure;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
@@ -134,7 +134,7 @@ class EventScopeSelectionTest {
 	@EventReceiver
 	@OnEventScope(prefix = "orders.")     // repeatable — OR semantics with the next one
 	@OnEventScope(prefix = "payments.")
-	@OnEventLifecycle(Lifecycle.FLOW_FINISHED)
+	@OnFlowLifecycle(Lifecycle.FLOW_FINISHED)
 	static class OrdersOrPaymentsFinished {
 		final List<TelemetryHolder> successCalls = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> failureCalls = new CopyOnWriteArrayList<>();

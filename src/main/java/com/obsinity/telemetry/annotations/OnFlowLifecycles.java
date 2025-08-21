@@ -6,10 +6,10 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** Container for repeatable {@link OnEventLifecycle}. */
+/** Container for repeatable {@link OnFlowLifecycle}. */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
-public @interface OnEventLifecycles {
-	OnEventLifecycle[] value();
+public @interface OnFlowLifecycles {
+	OnFlowLifecycle[] value();
 }

@@ -14,18 +14,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.obsinity.telemetry.annotations.PushAttribute;
+import com.obsinity.telemetry.annotations.PushContextValue;
 import com.obsinity.telemetry.model.OAttributes;
 import com.obsinity.telemetry.model.TelemetryHolder;
 
 /**
  * Producer-side parameter binder.
  *
- * <p>Writes method parameters into: - a {@link TelemetryHolder}'s attributes/context (via {@link #bind(TelemetryHolder,
- * ProceedingJoinPoint)}) - a provided {@link OAttributes} instance (via {@link #bind(OAttributes,
- * ProceedingJoinPoint)})
+ * <p>Writes method parameters into:
+ * - a {@link TelemetryHolder}'s attributes/context (via {@link #bind(TelemetryHolder, ProceedingJoinPoint)})
+ * - a provided {@link OAttributes} instance (via {@link #bind(OAttributes, ProceedingJoinPoint)})
  *
- * <p>Supported annotations: - {@link PushAttribute}: attributes[key] = arg (skips null when omitIfNull=true) -
- * "com.obsinity.telemetry.annotations.PushContextValue" (if present): eventContext[key] = arg
+ * <p>Supported annotations:
+ * - {@link PushAttribute}: attributes[key] = arg (skips null when omitIfNull=true)
+ * - {@link PushContextValue}: eventContext[key] = arg
  */
 @Component
 public class TelemetryAttributeBinder {
@@ -75,10 +77,9 @@ public class TelemetryAttributeBinder {
 					continue;
 				}
 
-				// ---- @PushContextValue (optional, detected by FQCN to avoid hard dependency) ----
-				if (isAnnotationNamed(ann, "com.obsinity.telemetry.annotations.PushContextValue")) {
-					String key = readStringMember(ann, "value");
-					if (isBlank(key)) key = readStringMember(ann, "name");
+				// ---- @PushContextValue (direct type check) ----
+				if (ann instanceof PushContextValue pcv) {
+					String key = firstNonBlank(pcv.value(), pcv.name());
 					if (isBlank(key)) continue;
 					if (ctxWriter != null) ctxWriter.accept(key, arg);
 				}
@@ -196,8 +197,8 @@ public class TelemetryAttributeBinder {
 	// ---------------- robust method resolution ----------------
 
 	/**
-	 * Resolve the concrete target method (handling proxies/bridge methods), preferring one that actually has parameter
-	 * annotations like {@link PushAttribute}.
+	 * Resolve the concrete target method (handling proxies/bridge methods), preferring one that actually
+	 * has parameter annotations like {@link PushAttribute} / {@link PushContextValue}.
 	 */
 	private static Method resolveMethodWithAnnotations(ProceedingJoinPoint pjp) {
 		MethodSignature sig = (MethodSignature) pjp.getSignature();
@@ -238,8 +239,8 @@ public class TelemetryAttributeBinder {
 			// also scan for bridge methods by name/arity
 			for (Method cand : c.getDeclaredMethods()) {
 				if (cand.getName().equals(name)
-						&& cand.getParameterCount() == params.length
-						&& (cand.isBridge() || cand.isSynthetic())) {
+					&& cand.getParameterCount() == params.length
+					&& (cand.isBridge() || cand.isSynthetic())) {
 					cand.setAccessible(true);
 					return cand;
 				}
@@ -271,27 +272,13 @@ public class TelemetryAttributeBinder {
 		for (Annotation[] anns : m.getParameterAnnotations()) {
 			for (Annotation a : anns) {
 				if (a instanceof PushAttribute) return true;
-				if (isAnnotationNamed(a, "com.obsinity.telemetry.annotations.PushContextValue")) return true;
+				if (a instanceof PushContextValue) return true;
 			}
 		}
 		return false;
 	}
 
 	// ---------------- utilities ----------------
-
-	private static boolean isAnnotationNamed(Annotation ann, String fqcn) {
-		return ann.annotationType().getName().equals(fqcn);
-	}
-
-	private static String readStringMember(Annotation ann, String member) {
-		try {
-			Method m = ann.annotationType().getMethod(member);
-			Object v = m.invoke(ann);
-			return (v == null) ? "" : String.valueOf(v);
-		} catch (Throwable ignored) {
-			return "";
-		}
-	}
 
 	private static String firstNonBlank(String a, String b) {
 		if (!isBlank(a)) return a;

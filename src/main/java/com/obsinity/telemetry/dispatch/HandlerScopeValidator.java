@@ -14,7 +14,7 @@ import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.stereotype.Component;
 
 import com.obsinity.telemetry.annotations.EventReceiver;
-import com.obsinity.telemetry.annotations.OnEventLifecycle;
+import com.obsinity.telemetry.annotations.OnFlowLifecycle;
 import com.obsinity.telemetry.annotations.OnEventScope;
 import com.obsinity.telemetry.annotations.OnFlowCompleted;
 import com.obsinity.telemetry.annotations.OnFlowFailure;
@@ -43,8 +43,8 @@ public class HandlerScopeValidator implements SmartInitializingSingleton {
 			// Class-level scopes (merged & repeatable) — these return Set, not List
 			Set<OnEventScope> scopes =
 					AnnotatedElementUtils.getMergedRepeatableAnnotations(userClass, OnEventScope.class);
-			Set<OnEventLifecycle> lifecyclesAnn =
-					AnnotatedElementUtils.getMergedRepeatableAnnotations(userClass, OnEventLifecycle.class);
+			Set<OnFlowLifecycle> lifecyclesAnn =
+					AnnotatedElementUtils.getMergedRepeatableAnnotations(userClass, OnFlowLifecycle.class);
 
 			// Flatten class-level scope config
 			Set<String> scopePrefixes = scopes.stream()

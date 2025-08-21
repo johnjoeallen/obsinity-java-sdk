@@ -123,7 +123,7 @@ class TelemetryRulesCoverageTest {
 
 	@EventReceiver
 	@OnEventScope("orders.")
-	@OnEventLifecycle(Lifecycle.FLOW_FINISHED)
+	@OnFlowLifecycle(Lifecycle.FLOW_FINISHED)
 	static class OrdersReceiver {
 		final List<TelemetryHolder> success = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> failure = new CopyOnWriteArrayList<>();
@@ -172,7 +172,7 @@ class TelemetryRulesCoverageTest {
 	@EventReceiver
 	@OnEventScope(prefix = "orders.")
 	@OnEventScope(prefix = "payments.") // multi‑prefix OR
-	@OnEventLifecycle(Lifecycle.FLOW_FINISHED)
+	@OnFlowLifecycle(Lifecycle.FLOW_FINISHED)
 	static class OrdersPaymentsReceiver {
 		final List<String> seen = new CopyOnWriteArrayList<>();
 
@@ -185,7 +185,7 @@ class TelemetryRulesCoverageTest {
 
 	/** Unscoped “control” to assert the event exists regardless of component scopes. */
 	@EventReceiver
-	@OnEventLifecycle(Lifecycle.FLOW_FINISHED)
+	@OnFlowLifecycle(Lifecycle.FLOW_FINISHED)
 	static class UnscopedControl {
 		final List<String> successes = new CopyOnWriteArrayList<>();
 		final List<String> failures  = new CopyOnWriteArrayList<>();
@@ -212,7 +212,7 @@ class TelemetryRulesCoverageTest {
 
 	/** Root batch demo + lonelyStep start/finish coverage. */
 	@EventReceiver
-	@OnEventLifecycle(Lifecycle.ROOT_FLOW_FINISHED)
+	@OnFlowLifecycle(Lifecycle.ROOT_FLOW_FINISHED)
 	static class RootBatchReceiver {
 		final List<List<TelemetryHolder>> batches = new CopyOnWriteArrayList<>();
 

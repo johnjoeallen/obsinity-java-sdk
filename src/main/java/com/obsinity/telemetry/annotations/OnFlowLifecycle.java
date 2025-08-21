@@ -12,8 +12,8 @@ import com.obsinity.telemetry.model.Lifecycle;
 /** Component-level filter restricting visible lifecycles (e.g. FLOW_FINISHED). Repeat to allow multiple lifecycles. */
 @Target({ElementType.TYPE, ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)
-@Repeatable(OnEventLifecycles.class)
+@Repeatable(OnFlowLifecycles.class)
 @Documented
-public @interface OnEventLifecycle {
+public @interface OnFlowLifecycle {
 	Lifecycle value();
 }

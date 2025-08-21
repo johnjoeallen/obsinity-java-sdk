@@ -7,9 +7,9 @@ import java.lang.annotation.*;
 /**
  * Convenience meta-annotation that expands to:
  * <ul>
- *   <li>{@link OnEventLifecycle}(FLOW_STARTED)</li>
- *   <li>{@link OnEventLifecycle}(FLOW_FINISHED)</li>
- *   <li>{@link OnEventLifecycle}(ROOT_FLOW_FINISHED)</li>
+ *   <li>{@link OnFlowLifecycle}(FLOW_STARTED)</li>
+ *   <li>{@link OnFlowLifecycle}(FLOW_FINISHED)</li>
+ *   <li>{@link OnFlowLifecycle}(ROOT_FLOW_FINISHED)</li>
  * </ul>
  *
  * Apply at the class level (e.g. on a receiver) to make it eligible for all major phases.
@@ -18,8 +18,8 @@ import java.lang.annotation.*;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
-@OnEventLifecycle(Lifecycle.FLOW_STARTED)
-@OnEventLifecycle(Lifecycle.FLOW_FINISHED)
-@OnEventLifecycle(Lifecycle.ROOT_FLOW_FINISHED)
+@OnFlowLifecycle(Lifecycle.FLOW_STARTED)
+@OnFlowLifecycle(Lifecycle.FLOW_FINISHED)
+@OnFlowLifecycle(Lifecycle.ROOT_FLOW_FINISHED)
 public @interface OnAllLifecycles {
 }
