@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 
+import com.obsinity.telemetry.annotations.OnEventLifecycle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -135,6 +136,9 @@ class TelemetryIntegrationBootTest {
 
 	/** Global fallbacks with phase filtering via method parameter (no lifecycle element on the annotation). */
 	@GlobalFlowFallback
+	@OnEventLifecycle(Lifecycle.FLOW_STARTED)
+	@OnEventLifecycle(Lifecycle.FLOW_FINISHED)
+	@OnEventLifecycle(Lifecycle.ROOT_FLOW_FINISHED)
 	static class GlobalFallbackReceiver {
 		final List<TelemetryHolder> starts = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> finishes = new CopyOnWriteArrayList<>();

@@ -160,21 +160,43 @@ public class TelemetryEventHandlerScanner {
 				}
 			}
 
-			// ---------- Component/global not matched ----------
+// ---------- Component/global not matched ----------
 			for (Method m : methodsAnnotated(userClass, OnFlowNotMatched.class)) {
-				validateBatchParamIfPresent(
-						userClass, m, new Lifecycle[] {Lifecycle.ROOT_FLOW_FINISHED}, false, "@OnFlowNotMatched");
+				validateBatchParamIfPresent(userClass, m,
+					new Lifecycle[]{Lifecycle.ROOT_FLOW_FINISHED}, false, "@OnFlowNotMatched");
 
 				Handler h = buildHandler(bean, userClass, m, null);
-				// @OnFlowNotMatched may carry lifecycle[]; if absent, register for all phases
-				Lifecycle[] phases = readLifecycleArray(m, OnFlowNotMatched.class);
-				List<Lifecycle> toRegister = (phases == null || phases.length == 0)
-						? Arrays.asList(Lifecycle.values())
-						: Arrays.asList(phases);
 
+				// lifecyclesDeclaredOnMethod (may be null/empty)
+				Lifecycle[] lifecyclesOnMethod = readLifecycleArray(m, OnFlowNotMatched.class);
+
+				// lifecyclesDeclaredOnClass (via @OnEventLifecycle at class level)
+				Set<Lifecycle> classLifecycles = readRepeatable(userClass, OnEventLifecycle.class).stream()
+					.flatMap(a -> {
+						Object v = org.springframework.core.annotation.AnnotationUtils.getValue(a, "value");
+						if (v instanceof Lifecycle[] arr) return Arrays.stream(arr);
+						if (v instanceof Lifecycle lc) return Arrays.stream(new Lifecycle[]{lc});
+						return Arrays.<Lifecycle>stream(new Lifecycle[0]);
+					})
+					.collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+
+				// Compute toRegister:
+				// - If the method declared lifecycles → use them.
+				// - Else, if the class declared lifecycles → use those.
+				// - Else default to FLOW_FINISHED only (not all phases).
+				java.util.LinkedHashSet<Lifecycle> toRegister = new java.util.LinkedHashSet<>();
+				if (lifecyclesOnMethod != null && lifecyclesOnMethod.length > 0) {
+					toRegister.addAll(java.util.Arrays.asList(lifecyclesOnMethod));
+				} else if (!classLifecycles.isEmpty()) {
+					toRegister.addAll(classLifecycles);
+				} else {
+					toRegister.add(Lifecycle.FLOW_FINISHED);
+				}
+
+				// Register in the proper bucket (component vs global)
 				for (Lifecycle p : toRegister) {
 					if (isGlobalFallback) {
-						group.registerGlobalUnmatchedCompleted(p, h);
+						group.registerGlobalUnmatchedCompleted(p, h);   // “completed” = both outcomes
 					} else {
 						group.registerComponentUnmatchedCompleted(p, h);
 					}
