@@ -17,7 +17,7 @@
 | `@OnFlowLifecycle`  | **Class**      | Component-level filter restricting **visible lifecycles** (e.g., `ROOT_FLOW_FINISHED`). Repeatable.  |
 | `@OnFlowLifecycles` | **Class**      | Container for multiple `@OnFlowLifecycle` entries.                                                  |
 | `@OnAllLifecycles`   | **Class**      | Shorthand: make the receiver visible for **all phases**.                                             |
-| `@OnEventScope`      | Method / Class | Declares name/prefix/kind filters (**scope**) for matching events.                                   |
+| `@OnEventScope`      | Method / Class | Declares name/prefix/kind filters (**scope**) for matching events. Repeatable.                                     |
 
 ### Flow receivers (flow-centric handlers)
 
@@ -33,10 +33,10 @@
 
 ### Outcome filtering
 
-| Type / Annotation | Target | Purpose                                      |
-| ----------------- | ------ | -------------------------------------------- |
-| `enum Outcome`    | —      | `SUCCESS`, `FAILURE`.                        |
-| `@OnOutcome`      | Method | Restrict a handler to a single outcome.      |
+| Type / Annotation | Target | Purpose                                             |
+| ----------------- | ------ |-----------------------------------------------------|
+| `enum Outcome`    | —      | `SUCCESS`, `FAILURE`.                               |
+| `@OnOutcome`      | Method | Restrict a handler to a single outcome. Repeatable. |
 
 ### Attribute & context I/O (producer-side “push”)
 
