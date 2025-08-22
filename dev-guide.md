@@ -15,9 +15,7 @@
 | `@Kind`              | Method / Class | Sets OTEL `SpanKind` (`SERVER`, `CLIENT`, `PRODUCER`, `CONSUMER`, `INTERNAL`).                       |
 | `@OrphanAlert`       | Method / Class | Controls log level when a `@Step` is auto-promoted because no active `@Flow` exists.                 |
 | `@OnEventLifecycle`  | **Class**      | Component-level filter restricting **visible lifecycles** (e.g., `ROOT_FLOW_FINISHED`). Repeatable.  |
-| `@OnEventLifecycles` | **Class**      | Container for multiple `@OnEventLifecycle` entries.                                                  |
 | `@OnEventScope`      | Method / Class | Declares name/prefix/kind filters (**scope**) for matching events.                                   |
-| `@OnEventScopes`     | Method / Class | Container for multiple `@OnEventScope` entries.                                                      |
 
 ### Flow receivers (flow-centric handlers)
 
@@ -37,7 +35,6 @@
 | ----------------- | ------ | -------------------------------------------- |
 | `enum Outcome`    | —      | `SUCCESS`, `FAILURE`.                        |
 | `@OnOutcome`      | Method | Restrict a handler to a single outcome.      |
-| `@OnOutcomes`     | Method | Container for multiple `@OnOutcome` entries. |
 
 ### Attribute & context I/O (producer-side “push”)
 
