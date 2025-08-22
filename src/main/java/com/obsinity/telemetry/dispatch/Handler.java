@@ -1,4 +1,3 @@
-// src/main/java/com/obsinity/telemetry/dispatch/Handler.java
 package com.obsinity.telemetry.dispatch;
 
 import java.lang.reflect.Method;
@@ -14,19 +13,19 @@ import com.obsinity.telemetry.model.TelemetryHolder;
 
 /** Immutable, precompiled handler descriptor discovered at bootstrap. */
 public record Handler(
-	Object bean,
-	Method method,
-	String exactName,                 // dot-chop key (validated by scanner; no wildcards)
-	BitSet lifecycleMask,             // null = any
-	BitSet kindMask,                  // null = any
-	List<Class<? extends Throwable>> throwableTypes,
-	boolean includeSubclasses,
-	Pattern messagePattern,           // optional regex on Throwable.getMessage()
-	Class<?> causeTypeOrNull,         // optional Throwable.getCause() type
-	List<ParamBinder> binders,
-	Set<String> requiredAttrs,
-	String id                         // e.g. beanClass#method
-) {
+		Object bean,
+		Method method,
+		String exactName, // dot-chop key (validated by scanner; no wildcards)
+		BitSet lifecycleMask, // null = any
+		BitSet kindMask, // null = any
+		List<Class<? extends Throwable>> throwableTypes,
+		boolean includeSubclasses,
+		Pattern messagePattern, // optional regex on Throwable.getMessage()
+		Class<?> causeTypeOrNull, // optional Throwable.getCause() type
+		List<ParamBinder> binders,
+		Set<String> requiredAttrs,
+		String id // e.g. beanClass#method
+		) {
 
 	/** Lifecycle acceptance (null mask = any). */
 	public boolean lifecycleAccepts(Lifecycle lc) {
@@ -55,9 +54,8 @@ public record Handler(
 	}
 
 	/**
-	 * Normalized bound throwable type for FAILURE specificity:
-	 * - If first declared type is Throwable/Exception, or no type is declared, returns null (generic).
-	 * - Otherwise returns that concrete subclass.
+	 * Normalized bound throwable type for FAILURE specificity: - If first declared type is Throwable/Exception, or no
+	 * type is declared, returns null (generic). - Otherwise returns that concrete subclass.
 	 */
 	public Class<? extends Throwable> failureThrowableType() {
 		if (throwableTypes == null || throwableTypes.isEmpty()) return null;
@@ -68,10 +66,8 @@ public record Handler(
 	}
 
 	/**
-	 * Specificity distance to the actual exception:
-	 * - 0 = exact class match
-	 * - N = N superclasses away
-	 * - Integer.MAX_VALUE = generic (no specific type) or not assignable
+	 * Specificity distance to the actual exception: - 0 = exact class match - N = N superclasses away -
+	 * Integer.MAX_VALUE = generic (no specific type) or not assignable
 	 */
 	public int failureSpecificityDistance(Throwable ex) {
 		Class<? extends Throwable> target = failureThrowableType();
@@ -98,11 +94,14 @@ public record Handler(
 
 		// 2) Required attributes
 		if (requiredAttrs != null && !requiredAttrs.isEmpty()) {
-			Map<String, ?> attrs = (h == null || h.attributes() == null) ? null : h.attributes().map();
+			Map<String, ?> attrs = (h == null || h.attributes() == null)
+					? null
+					: h.attributes().map();
 			if (attrs == null || !attrs.keySet().containsAll(requiredAttrs)) return false;
 		}
 
-		// 3) Throwable filters apply ONLY on failure path (dispatcher will only consider failure bucket when failed=true)
+		// 3) Throwable filters apply ONLY on failure path (dispatcher will only consider failure bucket when
+		// failed=true)
 		if (!failed) return true;
 
 		// 3a) Type checks
@@ -111,8 +110,8 @@ public record Handler(
 			for (Class<? extends Throwable> tt : throwableTypes) {
 				if (tt == null) continue;
 				if (includeSubclasses
-					? (tt.isInstance(error))
-					: (error != null && error.getClass().equals(tt))) {
+						? (tt.isInstance(error))
+						: (error != null && error.getClass().equals(tt))) {
 					ok = true;
 					break;
 				}

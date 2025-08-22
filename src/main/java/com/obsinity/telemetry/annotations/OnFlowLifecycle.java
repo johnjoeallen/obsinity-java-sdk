@@ -7,11 +7,13 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** Optional qualifier for {@link OnFlowCompleted} to restrict by outcome. */
-@Target(ElementType.METHOD)
+import com.obsinity.telemetry.model.Lifecycle;
+
+/** Component-level filter restricting visible lifecycles (e.g. FLOW_FINISHED). Repeat to allow multiple lifecycles. */
+@Target({ElementType.TYPE, ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)
-@Repeatable(OnOutcomes.class)
+@Repeatable(OnFlowLifecycles.class)
 @Documented
-public @interface OnOutcome {
-	Outcome value();
+public @interface OnFlowLifecycle {
+	Lifecycle value();
 }

@@ -20,7 +20,8 @@ import com.obsinity.telemetry.model.TelemetryHolder;
 public class TelemetryProcessorSupport {
 
 	private static final Logger log = LoggerFactory.getLogger(TelemetryProcessorSupport.class);
-	public static final String STEP_EXECUTED_WITH_NO_ACTIVE_FLOW_AUTO_PROMOTED_TO_FLOW = "Step '{}' executed with no active Flow; auto-promoted to Flow.";
+	public static final String STEP_EXECUTED_WITH_NO_ACTIVE_FLOW_AUTO_PROMOTED_TO_FLOW =
+			"Step '{}' executed with no active Flow; auto-promoted to Flow.";
 
 	/** Per-thread stack of active flows/holders (top = current). */
 	private final InheritableThreadLocal<Deque<TelemetryHolder>> ctx;

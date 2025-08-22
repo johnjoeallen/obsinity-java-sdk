@@ -2,7 +2,6 @@ package com.obsinity.telemetry.receivers;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -121,7 +120,9 @@ public class TelemetryDispatchBus {
 			// 3) Outcome availability (fast check to avoid useless handler probes)
 			try {
 				if (!g.hasAnyHandlersFor(phase, failed)) {
-					log.debug("BUS: component[{}]='{}' has no handlers for outcome={}, phase={}", i, componentName, failed, phase);
+					log.debug(
+						"BUS: component[{}]='{}' has no handlers for outcome={}, phase={}",
+						i, componentName, failed, phase);
 					continue;
 				}
 			} catch (NoSuchMethodError | Exception ignored) {
@@ -197,8 +198,14 @@ public class TelemetryDispatchBus {
 		// GLOBAL unmatched: only if nothing matched anywhere and no component-unmatched fired
 		if (!anyMatched && !anyComponentUnmatched) {
 			if (anyGroupEligibleForPhase) {
+
+				// --- NEW: rich diagnostics before global-unmatched path ---
+				logGlobalUnmatchedDiagnostics(phase, holder, failed, error);
+
 				boolean invoked = invokeGlobalUnmatchedAcrossAllComponents(phase, holder, failed, error, eventName);
-				log.debug("BUS: global-unmatched invoked={} (no named handlers matched and no component-unmatched)", invoked);
+				log.debug(
+					"BUS: global-unmatched invoked={} (no named handlers matched and no component-unmatched)",
+					invoked);
 				if (!invoked) {
 					log.error(
 						"Unhandled {} event name='{}' phase={} traceId={} spanId={} ex={}",
@@ -224,8 +231,7 @@ public class TelemetryDispatchBus {
 		Lifecycle phase,
 		Throwable error,
 		int componentIdx,
-		String componentName
-	) {
+		String componentName) {
 		if (failureHandlers == null || failureHandlers.isEmpty() || error == null) return List.of();
 
 		// 1) Filter to handlers that accept
@@ -234,15 +240,14 @@ public class TelemetryDispatchBus {
 			boolean ok = h.accepts(phase, holder, true, error);
 			log.debug(
 				"BUS: failure-candidate [{}]='{}' accepts?={} handler={} errClass={}",
-				componentIdx, componentName, ok, safeHandlerName(h),
-				error.getClass().getName());
+				componentIdx, componentName, ok, safeHandlerName(h), error.getClass().getName());
 			if (ok) elig.add(h);
 		}
 		if (elig.isEmpty()) return List.of();
 
 		// 2) Partition specific vs generic
 		List<Handler> specifics = new ArrayList<>();
-		List<Handler> generics  = new ArrayList<>();
+		List<Handler> generics = new ArrayList<>();
 		for (Handler h : elig) {
 			Class<? extends Throwable> tt = firstThrowableType(h);
 			if (isGenericThrowable(tt)) generics.add(h);
@@ -266,8 +271,10 @@ public class TelemetryDispatchBus {
 					}
 				}
 			}
-			log.debug("BUS: specific failure selection winners={} bestDistance={}",
-				winners.stream().map(TelemetryDispatchBus::safeHandlerName).toList(), best);
+			log.debug(
+				"BUS: specific failure selection winners={} bestDistance={}",
+				winners.stream().map(TelemetryDispatchBus::safeHandlerName).toList(),
+				best);
 			return winners;
 		}
 
@@ -318,14 +325,7 @@ public class TelemetryDispatchBus {
 			boolean ok = h.accepts(phase, holder, failed, error);
 			log.debug(
 				"BUS: match-check [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
-				componentIdx,
-				componentName,
-				bucketName,
-				ok,
-				safeHandlerName(h),
-				phase,
-				holder.name(),
-				failed);
+				componentIdx, componentName, bucketName, ok, safeHandlerName(h), phase, holder.name(), failed);
 			if (ok) return true;
 		}
 		return false;
@@ -347,21 +347,14 @@ public class TelemetryDispatchBus {
 			boolean ok = h.accepts(phase, holder, failed, error);
 			log.debug(
 				"BUS: invoke-check [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
-				componentIdx,
-				componentName,
-				bucketName,
-				ok,
-				safeHandlerName(h),
-				phase,
-				holder.name(),
-				failed);
+				componentIdx, componentName, bucketName, ok, safeHandlerName(h), phase, holder.name(), failed);
 			if (ok) safeInvoke(h, holder, phase);
 		}
 	}
 
 	/**
-	 * Component-scoped unmatched built from @OnFlowNotMatched registrations for this group only.
-	 * Returns true if any invoked.
+	 * Component-scoped unmatched built from @OnFlowNotMatched registrations for this group only. Returns true if any
+	 * invoked.
 	 */
 	private boolean invokeComponentUnmatched(
 		HandlerGroup g,
@@ -378,13 +371,7 @@ public class TelemetryDispatchBus {
 			boolean ok = h.accepts(phase, holder, failed, error);
 			log.debug(
 				"BUS: component-unmatched [{}]='{}' [completed] accepts?={} handler={} phase={} name='{}' failed={}",
-				componentIdx,
-				componentName,
-				ok,
-				safeHandlerName(h),
-				phase,
-				holder.name(),
-				failed);
+				componentIdx, componentName, ok, safeHandlerName(h), phase, holder.name(), failed);
 			if (ok) {
 				log.debug("BUS: component-unmatched invoking handler={}", safeHandlerName(h));
 				safeInvoke(h, holder, phase);
@@ -398,14 +385,7 @@ public class TelemetryDispatchBus {
 			boolean ok = h.accepts(phase, holder, failed, error);
 			log.debug(
 				"BUS: component-unmatched [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
-				componentIdx,
-				componentName,
-				modeName,
-				ok,
-				safeHandlerName(h),
-				phase,
-				holder.name(),
-				failed);
+				componentIdx, componentName, modeName, ok, safeHandlerName(h), phase, holder.name(), failed);
 			if (ok) {
 				log.debug("BUS: component-unmatched invoking handler={}", safeHandlerName(h));
 				safeInvoke(h, holder, phase);
@@ -438,13 +418,7 @@ public class TelemetryDispatchBus {
 				boolean ok = h.accepts(phase, holder, failed, error);
 				log.debug(
 					"BUS: GLOBAL-unmatched [{}]='{}' [completed] accepts?={} handler={} phase={} name='{}' failed={}",
-					i,
-					componentName,
-					ok,
-					safeHandlerName(h),
-					phase,
-					holder.name(),
-					failed);
+					i, componentName, ok, safeHandlerName(h), phase, holder.name(), failed);
 				if (ok) {
 					log.debug("BUS: GLOBAL-unmatched invoking handler={}", safeHandlerName(h));
 					safeInvoke(h, holder, phase);
@@ -457,14 +431,7 @@ public class TelemetryDispatchBus {
 				boolean ok = h.accepts(phase, holder, failed, error);
 				log.debug(
 					"BUS: GLOBAL-unmatched [{}]='{}' [{}] accepts?={} handler={} phase={} name='{}' failed={}",
-					i,
-					componentName,
-					modeName,
-					ok,
-					safeHandlerName(h),
-					phase,
-					holder.name(),
-					failed);
+					i, componentName, modeName, ok, safeHandlerName(h), phase, holder.name(), failed);
 				if (ok) {
 					log.debug("BUS: GLOBAL-unmatched invoking handler={}", safeHandlerName(h));
 					safeInvoke(h, holder, phase);
@@ -473,6 +440,109 @@ public class TelemetryDispatchBus {
 			}
 		}
 		return invoked;
+	}
+
+	/* =========================
+	   NEW: rich diagnostics before global-unmatched
+	   ========================= */
+	private void logGlobalUnmatchedDiagnostics(Lifecycle phase, TelemetryHolder holder, boolean failed, Throwable error) {
+		try {
+			log.warn(
+				"BUS: GLOBAL-UNMATCHED DIAGNOSTICS → event='{}' phase={} failed={} traceId={} spanId={} exClass={} exMsg={}",
+				holder.name(),
+				phase,
+				failed,
+				safe(holder.traceId()),
+				safe(holder.spanId()),
+				(error == null ? "-" : error.getClass().getName()),
+				(error == null ? "-" : String.valueOf(error.getMessage()))
+			);
+
+			for (int i = 0; i < groups.size(); i++) {
+				HandlerGroup g = groups.get(i);
+				String componentName = safeComponentName(g);
+
+				// lifecycle gate
+				boolean lifecycleOk;
+				try {
+					lifecycleOk = (g.getScope() == null) || g.supportsLifecycle(phase);
+				} catch (Throwable t) {
+					lifecycleOk = true; // be permissive if older API
+				}
+				if (!lifecycleOk) {
+					log.warn("  ↳ [{}]='{}' REASON=lifecycle_blocked phase={}", i, componentName, phase);
+					continue;
+				}
+
+				// scope gate
+				boolean scopeOk = false;
+				try {
+					scopeOk = g.isInScope(phase, holder.name(), holder);
+				} catch (Throwable t) {
+					scopeOk = false;
+				}
+				if (!scopeOk) {
+					log.warn("  ↳ [{}]='{}' REASON=out_of_scope name='{}'", i, componentName, holder.name());
+					continue;
+				}
+
+				// outcome availability
+				boolean hasOutcome = true;
+				try {
+					hasOutcome = g.hasAnyHandlersFor(phase, failed);
+				} catch (Throwable ignored) {}
+				if (!hasOutcome) {
+					log.warn("  ↳ [{}]='{}' REASON=no_handlers_for_outcome outcome={} phase={}",
+						i, componentName, (failed ? "FAILURE" : "SUCCESS"), phase);
+					continue;
+				}
+
+				// nearest tier
+				ModeBuckets chosen = null;
+				try {
+					chosen = g.findNearestEligibleTier(phase, holder.name(), holder, failed, error);
+				} catch (Throwable t) {
+					// ignore
+				}
+				if (chosen == null) {
+					log.warn("  ↳ [{}]='{}' REASON=no_tier_by_dot_chop name='{}'", i, componentName, holder.name());
+					continue;
+				}
+
+				int completedCount = (chosen.completed == null ? 0 : chosen.completed.size());
+				int successCount   = (chosen.success   == null ? 0 : chosen.success.size());
+				int failureCount   = (chosen.failure   == null ? 0 : chosen.failure.size());
+
+				int completedElig = countEligible(chosen.completed, holder, phase, failed, error);
+				int successElig   = countEligible(chosen.success,   holder, phase, false, null);
+				int failureElig   = countEligible(chosen.failure,   holder, phase, true,  error);
+
+				log.warn(
+					"  ↳ [{}]='{}' tier: completed(size={}, eligible={}) success(size={}, eligible={}) failure(size={}, eligible={})",
+					i, componentName, completedCount, completedElig, successCount, successElig, failureCount, failureElig
+				);
+
+				if (completedElig + (failed ? failureElig : successElig) == 0) {
+					log.warn("    → REASON=handlers_present_but_none_accepted (check required attrs/context, kind, throwable filters)");
+				} else {
+					// If we ever land here with eligibles > 0, it would mean anyMatched bookkeeping is wrong
+					log.warn("    → NOTE: eligible handlers exist; if global unmatched still fires, investigate anyMatched bookkeeping.");
+				}
+			}
+		} catch (Throwable t) {
+			log.warn("BUS: GLOBAL-UNMATCHED diagnostics failed: {}", t.toString(), t);
+		}
+	}
+
+	private int countEligible(List<Handler> hs, TelemetryHolder holder, Lifecycle phase, boolean failed, Throwable error) {
+		if (hs == null || hs.isEmpty()) return 0;
+		int n = 0;
+		for (Handler h : hs) {
+			try {
+				if (h.accepts(phase, holder, failed, error)) n++;
+			} catch (Throwable ignored) { }
+		}
+		return n;
 	}
 
 	private void safeInvoke(Handler h, TelemetryHolder holder, Lifecycle phase) {

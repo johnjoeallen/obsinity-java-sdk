@@ -16,25 +16,21 @@ import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
-import org.springframework.test.annotation.DirtiesContext;
 
 import io.opentelemetry.api.trace.SpanKind;
-
 import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.Kind;
-import com.obsinity.telemetry.annotations.OnFlowStarted;
 import com.obsinity.telemetry.annotations.OnFlowCompleted;
+import com.obsinity.telemetry.annotations.OnFlowStarted;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
 import com.obsinity.telemetry.annotations.PullAllContextValues;
 import com.obsinity.telemetry.annotations.PullAttribute;
 import com.obsinity.telemetry.annotations.PullContextValue;
 import com.obsinity.telemetry.annotations.Step;
-
 import com.obsinity.telemetry.dispatch.HandlerGroup;
 import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
 import com.obsinity.telemetry.model.Lifecycle;
@@ -48,14 +44,10 @@ import com.obsinity.telemetry.processor.TelemetryProcessor;
 import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 
-@SpringBootTest(
-	classes = TelemetryOnEventParamBindingTest.TestConfig.class,
-	webEnvironment = SpringBootTest.WebEnvironment.NONE,
-	properties = {
-		"spring.main.web-application-type=none",
-		"spring.main.allow-bean-definition-overriding=true"
-	})
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+@TelemetryBootSuite(
+		classes = TelemetryOnEventParamBindingTest.TestConfig.class,
+		properties = {"spring.main.web-application-type=none", "spring.main.allow-bean-definition-overriding=true"})
+@DisplayName("Parameter binding on FLOW_STARTED / FLOW_FINISHED / ROOT_FLOW_FINISHED")
 class TelemetryOnEventParamBindingTest {
 
 	/* ===== Sample complex object carried as an attribute ===== */
@@ -65,29 +57,38 @@ class TelemetryOnEventParamBindingTest {
 	@EnableAutoConfiguration(exclude = {com.obsinity.telemetry.configuration.AutoConfiguration.class})
 	@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
 	static class TestConfig {
-		@Bean AttributeParamExtractor attributeParamExtractor() { return new AttributeParamExtractor(); }
+		@Bean
+		AttributeParamExtractor attributeParamExtractor() {
+			return new AttributeParamExtractor();
+		}
 
-		@Bean TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor extractor) {
+		@Bean
+		TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor extractor) {
 			return new TelemetryAttributeBinder(extractor);
 		}
 
-		@Bean TelemetryProcessorSupport telemetryProcessorSupport() { return new TelemetryProcessorSupport(); }
+		@Bean
+		TelemetryProcessorSupport telemetryProcessorSupport() {
+			return new TelemetryProcessorSupport();
+		}
 
-		@Bean List<HandlerGroup> handlerGroups(ListableBeanFactory bf, TelemetryProcessorSupport support) {
+		@Bean
+		List<HandlerGroup> handlerGroups(ListableBeanFactory bf, TelemetryProcessorSupport support) {
 			return new TelemetryEventHandlerScanner(bf, support).handlerGroups();
 		}
 
-		// Bus now takes just the groups
-		@Bean TelemetryDispatchBus telemetryDispatchBus(List<HandlerGroup> groups) {
+		@Bean
+		TelemetryDispatchBus telemetryDispatchBus(List<HandlerGroup> groups) {
 			return new TelemetryDispatchBus(groups);
 		}
 
-		@Bean TelemetryProcessor telemetryProcessor(
-			TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
+		@Bean
+		TelemetryProcessor telemetryProcessor(
+				TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
 			return new TelemetryProcessor(binder, support, bus) {
 				@Override
 				protected OAttributes buildAttributes(
-					org.aspectj.lang.ProceedingJoinPoint pjp, com.obsinity.telemetry.aspect.FlowOptions opts) {
+						org.aspectj.lang.ProceedingJoinPoint pjp, com.obsinity.telemetry.aspect.FlowOptions opts) {
 					Map<String, Object> m = new LinkedHashMap<>();
 					m.put("test.flow", opts.name());
 					m.put("declaring.class", pjp.getSignature().getDeclaringTypeName());
@@ -99,15 +100,25 @@ class TelemetryOnEventParamBindingTest {
 			};
 		}
 
-		@Bean TelemetryAspect telemetryAspect(TelemetryProcessor p) { return new TelemetryAspect(p); }
+		@Bean
+		TelemetryAspect telemetryAspect(TelemetryProcessor p) {
+			return new TelemetryAspect(p);
+		}
 
-		@Bean TelemetryContext telemetryContext(TelemetryProcessorSupport support) {
+		@Bean
+		TelemetryContext telemetryContext(TelemetryProcessorSupport support) {
 			return new TelemetryContext(support);
 		}
 
-		@Bean TestService testService(TelemetryContext telemetry) { return new TestService(telemetry); }
+		@Bean
+		TestService testService(TelemetryContext telemetry) {
+			return new TestService(telemetry);
+		}
 
-		@Bean BindingCaptureReceiver bindingCaptureReceiver() { return new BindingCaptureReceiver(); }
+		@Bean
+		BindingCaptureReceiver bindingCaptureReceiver() {
+			return new BindingCaptureReceiver();
+		}
 	}
 
 	/* ===== Test service that writes attributes + EventContext ===== */
@@ -115,7 +126,9 @@ class TelemetryOnEventParamBindingTest {
 	static class TestService {
 		private final TelemetryContext telemetry;
 
-		TestService(TelemetryContext telemetry) { this.telemetry = telemetry; }
+		TestService(TelemetryContext telemetry) {
+			this.telemetry = telemetry;
+		}
 
 		@Flow(name = "bindingFlow")
 		public void bindingFlow() {
@@ -142,7 +155,9 @@ class TelemetryOnEventParamBindingTest {
 
 		@Kind(SpanKind.PRODUCER)
 		@Step(name = "lonelyStep")
-		public void lonelyStep() { /* no-op */ }
+		public void lonelyStep() {
+			/* no-op */
+		}
 	}
 
 	/* ===== Receiver that captures bound params (new API) ===== */
@@ -162,22 +177,43 @@ class TelemetryOnEventParamBindingTest {
 			final String tenantCtx;
 			final Integer retriesCtx;
 			final Map<String, Object> ctxAll;
-			FlowCapture(String userId, Integer attempt, UUID orderUuid, ComplexMeta meta,
-						String tenantCtx, Integer retriesCtx, Map<String, Object> ctxAll) {
-				this.userId = userId; this.attempt = attempt; this.orderUuid = orderUuid;
-				this.meta = meta; this.tenantCtx = tenantCtx; this.retriesCtx = retriesCtx; this.ctxAll = ctxAll;
+
+			FlowCapture(
+					String userId,
+					Integer attempt,
+					UUID orderUuid,
+					ComplexMeta meta,
+					String tenantCtx,
+					Integer retriesCtx,
+					Map<String, Object> ctxAll) {
+				this.userId = userId;
+				this.attempt = attempt;
+				this.orderUuid = orderUuid;
+				this.meta = meta;
+				this.tenantCtx = tenantCtx;
+				this.retriesCtx = retriesCtx;
+				this.ctxAll = ctxAll;
 			}
 		}
+
 		final List<FlowCapture> flowFinished = new CopyOnWriteArrayList<>();
 		final List<TelemetryHolder> allFinishes = new CopyOnWriteArrayList<>();
 
 		// step capture
 		static final class StepCapture {
-			final Integer ans; final String note; final String ctx; final TelemetryHolder holder;
+			final Integer ans;
+			final String note;
+			final String ctx;
+			final TelemetryHolder holder;
+
 			StepCapture(Integer ans, String note, String ctx, TelemetryHolder holder) {
-				this.ans = ans; this.note = note; this.ctx = ctx; this.holder = holder;
+				this.ans = ans;
+				this.note = note;
+				this.ctx = ctx;
+				this.holder = holder;
 			}
 		}
+
 		final List<StepCapture> stepFinished = new CopyOnWriteArrayList<>();
 
 		/* ---- Start taps (lonely step only, to keep the test’s assertion) ---- */
@@ -193,15 +229,15 @@ class TelemetryOnEventParamBindingTest {
 		// bindingFlow success → bind attributes + context
 		@OnFlowSuccess(name = "bindingFlow")
 		public void onBindingFlowFinished(
-			TelemetryHolder holder,
-			@PullAttribute(name = "user.id") String userId,
-			@PullAttribute(name = "attempt") Integer attempt,
-			@PullAttribute(name = "order.uuid") UUID orderUuid,
-			@PullAttribute(name = "meta") ComplexMeta meta,
-			@PullContextValue(name = "tenant") String tenant,
-			@PullContextValue(name = "retries") Integer retries,
-			@PullAllContextValues Map<String, Object> allCtx,
-			Lifecycle phase) {
+				TelemetryHolder holder,
+				@PullAttribute(name = "user.id") String userId,
+				@PullAttribute(name = "attempt") Integer attempt,
+				@PullAttribute(name = "order.uuid") UUID orderUuid,
+				@PullAttribute(name = "meta") ComplexMeta meta,
+				@PullContextValue(name = "tenant") String tenant,
+				@PullContextValue(name = "retries") Integer retries,
+				@PullAllContextValues Map<String, Object> allCtx,
+				Lifecycle phase) {
 			if (phase == Lifecycle.FLOW_FINISHED) {
 				flowFinished.add(new FlowCapture(userId, attempt, orderUuid, meta, tenant, retries, allCtx));
 				allFinishes.add(holder);
@@ -211,11 +247,11 @@ class TelemetryOnEventParamBindingTest {
 		// stepWithParams success → bind step attrs/context
 		@OnFlowSuccess(name = "stepWithParams")
 		public void stepWithParamsFinishedSuccessfully(
-			@PullAttribute(name = "step.answer") Integer ans,
-			@PullAttribute(name = "step.note") String note,
-			@PullContextValue(name = "step.ctx") String sctx,
-			TelemetryHolder holder,
-			Lifecycle phase) {
+				@PullAttribute(name = "step.answer") Integer ans,
+				@PullAttribute(name = "step.note") String note,
+				@PullContextValue(name = "step.ctx") String sctx,
+				TelemetryHolder holder,
+				Lifecycle phase) {
 			if (phase == Lifecycle.FLOW_FINISHED) {
 				stepFinished.add(new StepCapture(ans, note, sctx, holder));
 			}
@@ -238,8 +274,11 @@ class TelemetryOnEventParamBindingTest {
 		}
 	}
 
-	@Autowired TestService service;
-	@Autowired BindingCaptureReceiver handler;
+	@Autowired
+	TestService service;
+
+	@Autowired
+	BindingCaptureReceiver handler;
 
 	@BeforeEach
 	void reset() {
@@ -285,18 +324,16 @@ class TelemetryOnEventParamBindingTest {
 		assertThat(sc.holder.isStep()).isTrue();
 
 		TelemetryHolder parent = handler.finishes.stream()
-			.filter(h -> !h.isStep() && "flowWithStep".equals(h.name()))
-			.findFirst()
-			.orElseThrow();
+				.filter(h -> !h.isStep() && "flowWithStep".equals(h.name()))
+				.findFirst()
+				.orElseThrow();
 
 		OEvent folded = parent.events().stream()
-			.filter(e -> "stepWithParams".equals(e.name()))
-			.findFirst()
-			.orElseThrow();
+				.filter(e -> "stepWithParams".equals(e.name()))
+				.findFirst()
+				.orElseThrow();
 
-		assertThat(folded.attributes().map())
-			.containsEntry("step.answer", 7)
-			.containsEntry("step.note", "ok");
+		assertThat(folded.attributes().map()).containsEntry("step.answer", 7).containsEntry("step.note", "ok");
 		assertThat(folded.eventContext().get("step.ctx")).isEqualTo("ctx!");
 	}
 
@@ -304,8 +341,8 @@ class TelemetryOnEventParamBindingTest {
 	@DisplayName("Lonely @Step with @AutoFlow behaves like a real flow")
 	void lonelyStep_autoFlow_bindsLikeFlow() {
 		service.lonelyStep();
-		assertThat(handler.starts).hasSize(1);     // start captured via @OnFlow (phase=FLOW_STARTED)
-		assertThat(handler.finishes).hasSize(1);   // finish captured via @OnFlowSuccess (phase=FLOW_FINISHED)
+		assertThat(handler.starts).hasSize(1); // start captured via @OnFlowStarted
+		assertThat(handler.finishes).hasSize(1); // finish captured via @OnFlowSuccess
 
 		TelemetryHolder h = handler.finishes.get(0);
 		assertThat(h.name()).isEqualTo("lonelyStep");

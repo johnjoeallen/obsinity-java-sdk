@@ -1,13 +1,22 @@
-// src/main/java/com/obsinity/telemetry/dispatch/TelemetryEventHandlerScanner.java
 package com.obsinity.telemetry.dispatch;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.BitSet;
+import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
+import com.obsinity.telemetry.annotations.BindEventThrowable;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.context.annotation.Bean;
@@ -20,12 +29,12 @@ import io.opentelemetry.api.trace.SpanKind;
 
 import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.GlobalFlowFallback;
-import com.obsinity.telemetry.annotations.OnEventLifecycle;
+import com.obsinity.telemetry.annotations.OnFlowLifecycle;
 import com.obsinity.telemetry.annotations.OnEventScope;
-import com.obsinity.telemetry.annotations.OnFlowStarted;
 import com.obsinity.telemetry.annotations.OnFlowCompleted;
 import com.obsinity.telemetry.annotations.OnFlowFailure;
 import com.obsinity.telemetry.annotations.OnFlowNotMatched;
+import com.obsinity.telemetry.annotations.OnFlowStarted;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
 import com.obsinity.telemetry.annotations.OnOutcome;
 import com.obsinity.telemetry.annotations.Outcome;
@@ -56,7 +65,8 @@ import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
  *         * both/none                    -> error
  *       Outcomes from @OnOutcome (default = both SUCCESS & FAILURE).
  *       If method also declares @OnEventLifecycle, it must include the inferred phase.
- *   - @OnFlowNotMatched      -> component/global unmatched; lifecycle[] may be specified on the annotation
+ *   - @OnFlowNotMatched      -> component/global unmatched; lifecycle[] may be specified on the annotation.
+ *       If neither method nor class declares lifecycles, we default to FLOW_FINISHED only.
  *
  * Batch binding:
  *   - Methods declaring a parameter of type List<TelemetryHolder> are valid only for ROOT_FLOW_FINISHED.
@@ -100,7 +110,7 @@ public class TelemetryEventHandlerScanner {
 				.filter(s -> s != null && !s.isBlank())
 				.toList();
 
-			Set<Lifecycle> lifecycleSet = readRepeatable(userClass, OnEventLifecycle.class).stream()
+			Set<Lifecycle> lifecycleSet = readRepeatable(userClass, OnFlowLifecycle.class).stream()
 				.flatMap(a -> {
 					Object v = AnnotationUtils.getValue(a, "value");
 					if (v instanceof Lifecycle[] arr) return Arrays.stream(arr);
@@ -119,35 +129,31 @@ public class TelemetryEventHandlerScanner {
 			// Guard (exactName + phase + outcome-bucket [+ failureType]) within this component
 			Map<String, List<String>> dupGuard = new LinkedHashMap<>();
 
-			// ---------- OnFlowStarted (phase only; no outcomes) ----------
+			// ---------- OnFlowStarted ----------
 			for (Method m : methodsAnnotated(userClass, OnFlowStarted.class)) {
 				String name = readAliasedName(m, OnFlowStarted.class);
 				validateNonBlank(userClass, m, "@OnFlowStarted.name", name);
 				validateMethodLifecycleAnnotationIncludes(userClass, m, Lifecycle.FLOW_STARTED, "@OnFlowStarted");
-
-				// Use the group's "completed" bucket for FLOW_STARTED only (no outcome axis)
 				registerStartedPhase(group, bean, userClass, m, name, dupGuard);
 			}
 
-			// ---------- OnFlowSuccess (FLOW_FINISHED, SUCCESS only) ----------
+			// ---------- OnFlowSuccess ----------
 			for (Method m : methodsAnnotated(userClass, OnFlowSuccess.class)) {
 				String name = readAliasedName(m, OnFlowSuccess.class);
 				validateNonBlank(userClass, m, "@OnFlowSuccess.name", name);
 				validateMethodLifecycleAnnotationIncludes(userClass, m, Lifecycle.FLOW_FINISHED, "@OnFlowSuccess");
-
 				registerOutcome(group, bean, userClass, m, name, Lifecycle.FLOW_FINISHED, Outcome.SUCCESS, dupGuard);
 			}
 
-			// ---------- OnFlowFailure (FLOW_FINISHED, FAILURE only) ----------
+			// ---------- OnFlowFailure ----------
 			for (Method m : methodsAnnotated(userClass, OnFlowFailure.class)) {
 				String name = readAliasedName(m, OnFlowFailure.class);
 				validateNonBlank(userClass, m, "@OnFlowFailure.name", name);
 				validateMethodLifecycleAnnotationIncludes(userClass, m, Lifecycle.FLOW_FINISHED, "@OnFlowFailure");
-
 				registerOutcome(group, bean, userClass, m, name, Lifecycle.FLOW_FINISHED, Outcome.FAILURE, dupGuard);
 			}
 
-			// ---------- OnFlowCompleted (infer lifecycle; outcomes from @OnOutcome or both) ----------
+			// ---------- OnFlowCompleted ----------
 			for (Method m : methodsAnnotated(userClass, OnFlowCompleted.class)) {
 				String name = readAliasedName(m, OnFlowCompleted.class);
 				validateNonBlank(userClass, m, "@OnFlowCompleted.name", name);
@@ -167,15 +173,36 @@ public class TelemetryEventHandlerScanner {
 					new Lifecycle[]{Lifecycle.ROOT_FLOW_FINISHED}, false, "@OnFlowNotMatched");
 
 				Handler h = buildHandler(bean, userClass, m, null);
-				// @OnFlowNotMatched may carry lifecycle[]; if absent, register for all phases
-				Lifecycle[] phases = readLifecycleArray(m, OnFlowNotMatched.class);
-				List<Lifecycle> toRegister = (phases == null || phases.length == 0)
-					? Arrays.asList(Lifecycle.values())
-					: Arrays.asList(phases);
+
+				// lifecyclesDeclaredOnMethod (may be null/empty)
+				Lifecycle[] lifecyclesOnMethod = readLifecycleArray(m, OnFlowNotMatched.class);
+
+				// lifecyclesDeclaredOnClass (via @OnEventLifecycle at class level, including @OnAllLifecycles)
+				Set<Lifecycle> classLifecycles = readRepeatable(userClass, OnFlowLifecycle.class).stream()
+					.flatMap(a -> {
+						Object v = org.springframework.core.annotation.AnnotationUtils.getValue(a, "value");
+						if (v instanceof Lifecycle[] arr) return Arrays.stream(arr);
+						if (v instanceof Lifecycle lc) return Arrays.stream(new Lifecycle[]{lc});
+						return Arrays.<Lifecycle>stream(new Lifecycle[0]);
+					})
+					.collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+
+				// Compute toRegister:
+				// - If the method declared lifecycles → use them.
+				// - Else, if the class declared lifecycles → use those.
+				// - Else default to FLOW_FINISHED only (not all phases).
+				java.util.LinkedHashSet<Lifecycle> toRegister = new java.util.LinkedHashSet<>();
+				if (lifecyclesOnMethod != null && lifecyclesOnMethod.length > 0) {
+					toRegister.addAll(java.util.Arrays.asList(lifecyclesOnMethod));
+				} else if (!classLifecycles.isEmpty()) {
+					toRegister.addAll(classLifecycles);
+				} else {
+					toRegister.add(Lifecycle.FLOW_FINISHED);
+				}
 
 				for (Lifecycle p : toRegister) {
 					if (isGlobalFallback) {
-						group.registerGlobalUnmatchedCompleted(p, h);
+						group.registerGlobalUnmatchedCompleted(p, h); // “completed” = both outcomes
 					} else {
 						group.registerComponentUnmatchedCompleted(p, h);
 					}
@@ -202,11 +229,9 @@ public class TelemetryEventHandlerScanner {
 		String exactName,
 		Map<String, List<String>> dupGuard
 	) {
-		// Validate batch param constraints (only ROOT_FLOW_FINISHED allows List<TelemetryHolder>)
 		validateBatchParamIfPresent(userClass, m, new Lifecycle[]{Lifecycle.ROOT_FLOW_FINISHED}, false, "flow handler");
 
 		Handler h = buildHandler(bean, userClass, m, exactName);
-		// Use group's "completed" bucket for FLOW_STARTED only (acts as no-outcome list)
 		String key = dupKey(exactName, Lifecycle.FLOW_STARTED, "STARTED");
 		dupGuard.computeIfAbsent(key, k -> new ArrayList<>()).add(userClass.getSimpleName() + "#" + m.getName());
 		group.registerFlowCompleted(exactName, Lifecycle.FLOW_STARTED, h);
@@ -222,21 +247,20 @@ public class TelemetryEventHandlerScanner {
 		Outcome outcome,
 		Map<String, List<String>> dupGuard
 	) {
-		// Validate batch param constraints (only ROOT_FLOW_FINISHED allows List<TelemetryHolder>)
 		validateBatchParamIfPresent(userClass, m, new Lifecycle[]{Lifecycle.ROOT_FLOW_FINISHED}, false, "flow handler");
 
 		Handler h = buildHandler(bean, userClass, m, exactName);
 
 		String key = dupKey(exactName, phase, outcome.name());
-		// For FAILURE, include the throwable specificity key to distinguish slots; generic/unbound collapse to "*"
 		if (outcome == Outcome.FAILURE) {
-			key = key + "|" + failureTypeKey(h.failureThrowableType());
+			// Distinguish failure slots by the *bound* Throwable specificity (Exception/Throwable collapse to '*')
+			key = key + "|" + failureTypeKey(firstThrowableType(h));
 		}
 		dupGuard.computeIfAbsent(key, k -> new ArrayList<>()).add(userClass.getSimpleName() + "#" + m.getName());
 
 		if (outcome == Outcome.SUCCESS) {
 			group.registerFlowSuccess(exactName, phase, h);
-		} else if (outcome == Outcome.FAILURE) {
+		} else {
 			group.registerFlowFailure(exactName, phase, h);
 		}
 	}
@@ -264,12 +288,12 @@ public class TelemetryEventHandlerScanner {
 			exactNameOrNull,
 			lifecycleMask,
 			kindMask,
-			throwableTypes, // used for failure specificity
-			true,           // includeSubclasses
-			null,           // messagePattern
-			null,           // causeTypeOrNull
+			throwableTypes,     // used for failure specificity
+			true,               // includeSubclasses
+			null,               // messagePattern
+			null,               // causeTypeOrNull
 			binders,
-			Set.of(),       // required attributes
+			Set.of(),           // required attributes
 			id
 		);
 	}
@@ -280,12 +304,6 @@ public class TelemetryEventHandlerScanner {
 
 	private record InferredLifecycle(Lifecycle phase, boolean usesBatch) {}
 
-	/**
-	 * Infer lifecycle for @OnFlowCompleted from method parameters:
-	 *  - List<TelemetryHolder> -> ROOT_FLOW_FINISHED
-	 *  - TelemetryHolder (and no List<TelemetryHolder>) -> FLOW_FINISHED
-	 *  - Otherwise or both present -> error
-	 */
 	private InferredLifecycle inferLifecycleFromParams(Class<?> userClass, Method m) {
 		boolean hasHolder = false;
 		boolean hasBatch = false;
@@ -322,15 +340,12 @@ public class TelemetryEventHandlerScanner {
 			+ "@OnFlowCompleted must declare either TelemetryHolder OR List<TelemetryHolder> to determine lifecycle");
 	}
 
-	/**
-	 * If method carries @OnEventLifecycle, ensure it includes the inferred phase (for @OnFlowCompleted).
-	 */
 	private void validateMethodLifecycleAnnotationMatches(Class<?> userClass, Method m, Lifecycle inferred) {
-		List<OnEventLifecycle> anns = readRepeatable(m, OnEventLifecycle.class);
+		List<OnFlowLifecycle> anns = readRepeatable(m, OnFlowLifecycle.class);
 		if (anns.isEmpty()) return;
 
 		Set<Lifecycle> declared = new LinkedHashSet<>();
-		for (OnEventLifecycle a : anns) {
+		for (OnFlowLifecycle a : anns) {
 			Object v = AnnotationUtils.getValue(a, "value");
 			if (v instanceof Lifecycle[] arr) declared.addAll(Arrays.asList(arr));
 			else if (v instanceof Lifecycle lc) declared.add(lc);
@@ -342,16 +357,14 @@ public class TelemetryEventHandlerScanner {
 		}
 	}
 
-	/**
-	 * For fixed-phase handlers (@OnFlowStarted/@OnFlowSuccess/@OnFlowFailure), if method has @OnEventLifecycle,
-	 * ensure it includes the required phase.
-	 */
-	private void validateMethodLifecycleAnnotationIncludes(Class<?> userClass, Method m, Lifecycle required, String where) {
-		List<OnEventLifecycle> anns = readRepeatable(m, OnEventLifecycle.class);
+	private void validateMethodLifecycleAnnotationIncludes(
+		Class<?> userClass, Method m, Lifecycle required, String where
+	) {
+		List<OnFlowLifecycle> anns = readRepeatable(m, OnFlowLifecycle.class);
 		if (anns.isEmpty()) return;
 
 		Set<Lifecycle> declared = new LinkedHashSet<>();
-		for (OnEventLifecycle a : anns) {
+		for (OnFlowLifecycle a : anns) {
 			Object v = AnnotationUtils.getValue(a, "value");
 			if (v instanceof Lifecycle[] arr) declared.addAll(Arrays.asList(arr));
 			else if (v instanceof Lifecycle lc) declared.add(lc);
@@ -594,12 +607,10 @@ public class TelemetryEventHandlerScanner {
 		return null;
 	}
 
-	// replace the whole method
 	private static Lifecycle[] readLifecycleArray(Method m, Class<? extends Annotation> annotationType) {
 		MergedAnnotation<?> ma = MergedAnnotations.from(m).get(annotationType);
 		if (ma.isPresent()) {
 			try {
-				// Spring API: use getValue(name, type) -> Optional<T>
 				java.util.Optional<Lifecycle[]> opt = ma.getValue("lifecycle", Lifecycle[].class);
 				if (opt.isPresent()) return opt.get();
 			} catch (Exception ignored) { }
@@ -664,20 +675,20 @@ public class TelemetryEventHandlerScanner {
 		Annotation[][] anns = m.getParameterAnnotations();
 		Class<?>[] pts = m.getParameterTypes();
 
+
 		// 1) Prefer an explicitly annotated @BindEventThrowable param
 		for (int i = 0; i < pts.length; i++) {
 			boolean hasBind = false;
 			for (Annotation a : anns[i]) {
-				// Avoid a hard dependency if the annotation class isn’t on the compile path here
-				if ("com.obsinity.telemetry.annotations.BindEventThrowable".equals(a.annotationType().getName())) {
-					hasBind = true; break;
+				if (a.annotationType() == BindEventThrowable.class) {
+					hasBind = true;
+					break;
 				}
 			}
 			if (hasBind && Throwable.class.isAssignableFrom(pts[i])) {
 				return (Class<? extends Throwable>) pts[i];
 			}
 		}
-
 		// 2) Otherwise, any Throwable parameter counts
 		for (int i = 0; i < pts.length; i++) {
 			if (Throwable.class.isAssignableFrom(pts[i])) {
@@ -685,5 +696,15 @@ public class TelemetryEventHandlerScanner {
 			}
 		}
 		return null; // generic
+	}
+
+	/** Safely returns the first declared failure throwable type of a built Handler, or null if generic. */
+	private static Class<? extends Throwable> firstThrowableType(Handler h) {
+		try {
+			List<Class<? extends Throwable>> tts = h.throwableTypes();
+			return (tts == null || tts.isEmpty()) ? null : tts.get(0);
+		} catch (Throwable ignored) {
+			return null;
+		}
 	}
 }

@@ -1,4 +1,3 @@
-// src/main/java/com/obsinity/telemetry/dispatch/HandlerGroup.java
 package com.obsinity.telemetry.dispatch;
 
 import java.util.ArrayList;
@@ -15,12 +14,10 @@ import com.obsinity.telemetry.model.TelemetryHolder;
 /**
  * Per-component registry of handlers discovered by the scanner (flow-centric).
  *
- * Structure:
- *  - tiers: dot-chop tiers for named handlers (exact name → nearest ancestor fallback).
- *  - unmatched: component-scoped not-matched handlers.
- *  - globalUnmatched: global not-matched handlers.
+ * <p>Structure: - tiers: dot-chop tiers for named handlers (exact name → nearest ancestor fallback). - unmatched:
+ * component-scoped not-matched handlers. - globalUnmatched: global not-matched handlers.
  *
- * Component-level Scope supports prefix and lifecycle filtering.
+ * <p>Component-level Scope supports prefix and lifecycle filtering.
  */
 public final class HandlerGroup {
 
@@ -62,8 +59,8 @@ public final class HandlerGroup {
 	}
 
 	/* =========================
-	   Group-level gates (used by dispatcher)
-	   ========================= */
+	Group-level gates (used by dispatcher)
+	========================= */
 
 	/** True if this group declared support for the given lifecycle phase. */
 	public boolean supportsLifecycle(Lifecycle phase) {
@@ -77,8 +74,8 @@ public final class HandlerGroup {
 	}
 
 	/**
-	 * Fast pre-check: does the group have any handlers interested in this phase/outcome?
-	 * Used to avoid probing per-handler accepts() when nothing is registered for the outcome.
+	 * Fast pre-check: does the group have any handlers interested in this phase/outcome? Used to avoid probing
+	 * per-handler accepts() when nothing is registered for the outcome.
 	 */
 	public boolean hasAnyHandlersFor(Lifecycle phase, boolean failed) {
 		// Check unmatched first (cheap)
@@ -101,28 +98,31 @@ public final class HandlerGroup {
 	}
 
 	/* =========================
-	   Registration (scanner)
-	   ========================= */
+	Registration (scanner)
+	========================= */
 
 	/** Register a handler that should run on BOTH outcomes (aka "completed"). */
 	public void registerFlowCompleted(String exactName, Lifecycle phase, Handler h) {
 		tiers.computeIfAbsent(exactName, k -> new ModeBucketsByPhase())
-			.forPhase(phase)
-			.completed.add(h);
+				.forPhase(phase)
+				.completed
+				.add(h);
 	}
 
 	/** Register a handler that should run only on SUCCESS outcome. */
 	public void registerFlowSuccess(String exactName, Lifecycle phase, Handler h) {
 		tiers.computeIfAbsent(exactName, k -> new ModeBucketsByPhase())
-			.forPhase(phase)
-			.success.add(h);
+				.forPhase(phase)
+				.success
+				.add(h);
 	}
 
 	/** Register a handler that should run only on FAILURE outcome. */
 	public void registerFlowFailure(String exactName, Lifecycle phase, Handler h) {
 		tiers.computeIfAbsent(exactName, k -> new ModeBucketsByPhase())
-			.forPhase(phase)
-			.failure.add(h);
+				.forPhase(phase)
+				.failure
+				.add(h);
 	}
 
 	/** Component-scoped unmatched for COMPLETED (both outcomes). */
@@ -156,16 +156,16 @@ public final class HandlerGroup {
 	}
 
 	/* =========================
-	   Query (dispatcher)
-	   ========================= */
+	Query (dispatcher)
+	========================= */
 
 	/**
-	 * Dot-chop selection for this component:
-	 *  - Try exact event name tier; if no handlers in that tier for the phase, chop last segment and try again.
-	 *  - Returns the first (nearest) tier that has ANY handlers registered for the given phase; dispatcher checks eligibility.
+	 * Dot-chop selection for this component: - Try exact event name tier; if no handlers in that tier for the phase,
+	 * chop last segment and try again. - Returns the first (nearest) tier that has ANY handlers registered for the
+	 * given phase; dispatcher checks eligibility.
 	 */
 	public ModeBuckets findNearestEligibleTier(
-		Lifecycle phase, String eventName, TelemetryHolder holder, boolean failed, Throwable error) {
+			Lifecycle phase, String eventName, TelemetryHolder holder, boolean failed, Throwable error) {
 
 		String name = eventName;
 		while (name != null && !name.isEmpty()) {
@@ -187,20 +187,20 @@ public final class HandlerGroup {
 	}
 
 	/* =========================
-	   Types
-	   ========================= */
+	Types
+	========================= */
 
 	/**
-	 * Compiled component-level scope: prefixes (OR) and lifecycles (OR). Both sets are ANDed together.
-	 * Null/empty means "any".
+	 * Compiled component-level scope: prefixes (OR) and lifecycles (OR). Both sets are ANDed together. Null/empty means
+	 * "any".
 	 */
 	public static final class Scope {
-		private final String[] prefixes;             // null/empty = any
-		private final EnumSet<Lifecycle> phases;     // null = any
+		private final String[] prefixes; // null/empty = any
+		private final EnumSet<Lifecycle> phases; // null = any
 
 		private Scope(String[] prefixes, EnumSet<Lifecycle> phases) {
 			this.prefixes = (prefixes == null || prefixes.length == 0) ? null : prefixes;
-			this.phases   = (phases == null || phases.isEmpty())       ? null : phases;
+			this.phases = (phases == null || phases.isEmpty()) ? null : phases;
 		}
 
 		public static Scope allowAll() {
@@ -259,15 +259,13 @@ public final class HandlerGroup {
 	}
 
 	/**
-	 * Buckets of handlers by flow outcome.
-	 * - completed: runs regardless of outcome
-	 * - success: runs only when no throwable
-	 * - failure: runs only when throwable present
+	 * Buckets of handlers by flow outcome. - completed: runs regardless of outcome - success: runs only when no
+	 * throwable - failure: runs only when throwable present
 	 */
 	public static final class ModeBuckets {
 		public final List<Handler> completed = new ArrayList<>();
-		public final List<Handler> success   = new ArrayList<>();
-		public final List<Handler> failure   = new ArrayList<>();
+		public final List<Handler> success = new ArrayList<>();
+		public final List<Handler> failure = new ArrayList<>();
 
 		public boolean isEmpty() {
 			return completed.isEmpty() && success.isEmpty() && failure.isEmpty();
@@ -283,8 +281,16 @@ public final class HandlerGroup {
 		}
 
 		// Convenience views used by dispatcher (for current phase)
-		public List<Handler> combined(Lifecycle p) { return forPhase(p).completed; } // alias for “completed”
-		public List<Handler> success(Lifecycle p)  { return forPhase(p).success; }
-		public List<Handler> failure(Lifecycle p)  { return forPhase(p).failure; }
+		public List<Handler> combined(Lifecycle p) {
+			return forPhase(p).completed;
+		} // alias for “completed”
+
+		public List<Handler> success(Lifecycle p) {
+			return forPhase(p).success;
+		}
+
+		public List<Handler> failure(Lifecycle p) {
+			return forPhase(p).failure;
+		}
 	}
 }

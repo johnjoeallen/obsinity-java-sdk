@@ -14,7 +14,9 @@
 | `@Step`              | Method         | Emits a **step** inside the active flow; auto-promoted to a flow if none is active.                  |
 | `@Kind`              | Method / Class | Sets OTEL `SpanKind` (`SERVER`, `CLIENT`, `PRODUCER`, `CONSUMER`, `INTERNAL`).                       |
 | `@OrphanAlert`       | Method / Class | Controls log level when a `@Step` is auto-promoted because no active `@Flow` exists.                 |
-| `@OnEventLifecycle`  | **Class**      | Component-level filter restricting **visible lifecycles** (e.g., `ROOT_FLOW_FINISHED`). Repeatable.  |
+| `@OnFlowLifecycle`  | **Class**      | Component-level filter restricting **visible lifecycles** (e.g., `ROOT_FLOW_FINISHED`). Repeatable.  |
+| `@OnFlowLifecycles` | **Class**      | Container for multiple `@OnFlowLifecycle` entries.                                                  |
+| `@OnAllLifecycles`   | **Class**      | Shorthand: make the receiver visible for **all phases**.                                             |
 | `@OnEventScope`      | Method / Class | Declares name/prefix/kind filters (**scope**) for matching events.                                   |
 
 ### Flow receivers (flow-centric handlers)
@@ -65,7 +67,7 @@
 ## Selection & Matching (dot-chop, scope, lifecycle, kind)
 
 * **Dot-chop**: `a.b.c` → `a.b` → `a` → `""`.
-* **Class lifecycle filters**: `@OnEventLifecycle` restricts what phases are visible.
+* **Class lifecycle filters**: `@OnFlowLifecycle` restricts what phases are visible. `@OnAllLifecycles` overrides to allow all.
 * **Scope filters**: `@OnEventScope` (class & method).
 * **Outcome filters**:
 
@@ -80,79 +82,20 @@
 1. **No “COMPLETED” phase**: every flow finish is either SUCCESS or FAILURE.
 
     * Use `@OnFlowCompleted` for “always”.
-    * Use `@OnOutcome` to restrict further.
+    * Use `@OnOutcome` to narrow further.
 2. **Root flows**: only `@OnFlowCompleted` can handle them.
 3. **Do not duplicate** handlers with identical `(lifecycle visibility + name/prefix + outcome set + signature)`.
 4. **Throwable binding**: only on failure handlers.
-5. **Preconditions**: enforce presence of required attributes/context.
+5. **Failure specificity**: if multiple `@OnFlowFailure` are eligible, **most specific throwable binding wins** (`IllegalArgumentException` > `RuntimeException` > `Exception` > unbound).
 6. **Class scopes refine downwards**: class-level + method-level must both pass.
-7. **Failure handlers**: if multiple are eligible, **most specific throwable binding wins** (`IllegalArgumentException` > `RuntimeException` > `Throwable` > no binding).
+7. **Fallbacks**:
+
+    * `@OnFlowNotMatched` → component-scoped fallback.
+    * `@GlobalFlowFallback` → only if **no receiver** matched the flow at all.
 
 ---
 
-## Step-by-Step Guide
-
-**1. Define a flow in your service:**
-
-```java
-@Flow("checkout.start")
-@Kind(SpanKind.SERVER)
-public void startCheckout(String userId) {
-    telemetry.putAttr("user.id", userId);
-}
-```
-
-**2. Add steps inside it:**
-
-```java
-@Step("checkout.reserve")
-public void reserveInventory(String sku) {
-    telemetry.putAttr("sku", sku);
-}
-```
-
-**3. Push attributes/context automatically with annotations:**
-
-```java
-@Flow("payment.charge")
-public void charge(@PushAttribute("amount") BigDecimal amount,
-                   @PushContextValue("session") String session) { /* ... */ }
-```
-
-**4. Write a receiver:**
-
-```java
-@EventReceiver
-public class CheckoutReceiver {
-    @OnFlowCompleted("checkout")
-    @OnOutcome(Outcome.SUCCESS)
-    public void onSuccess(@PullAttribute("user.id") String userId) {
-        // handle success
-    }
-}
-```
-
-**5. Handle errors:**
-
-```java
-@OnFlowFailure("checkout")
-public void onFailure(@BindEventThrowable Exception ex,
-                      @PullAllAttributes Map<String,Object> attrs) { /* ... */ }
-```
-
-**6. Provide fallbacks:**
-
-```java
-@GlobalFlowFallback
-public class LastResort {
-    @OnFlowCompleted("")
-    public void onAnyFlow(List<TelemetryHolder> flows) { /* ... */ }
-}
-```
-
----
-
-## Extended Examples (documented)
+## Examples
 
 ### Flow & Steps
 
@@ -167,7 +110,7 @@ public void startCheckout(
 @Step("checkout.reserve")                   // Step within checkout
 public void reserveInventory(@PushAttribute("sku") String sku) { /* ... */ }
 
-@Step("checkout.payment")                   // Auto-promoted if called outside a flow
+@Step("checkout.payment")                   // Auto-promoted if no flow is active
 @OrphanAlert(OrphanAlert.Level.WARN)
 public void processPayment(@PushAttribute("payment.method") String method) { /* ... */ }
 ```
@@ -177,7 +120,7 @@ public void processPayment(@PushAttribute("payment.method") String method) { /* 
 ```java
 @EventReceiver
 @OnEventScope(prefix = "checkout")
-@OnEventLifecycle(ROOT_FLOW_FINISHED)
+@OnFlowLifecycle(ROOT_FLOW_FINISHED)
 public class CheckoutReceiver {
 
   @OnFlowStarted("checkout.start")
@@ -201,27 +144,19 @@ public class CheckoutReceiver {
 public class FailureSpecificReceiver {
 
   @OnFlowFailure("checkout")
-  public void onAnyFailure(@BindEventThrowable Throwable t) {
-      // fallback for any error
-  }
+  public void onAnyFailure(@BindEventThrowable Throwable t) { /* fallback */ }
 
   @OnFlowFailure("checkout")
-  public void onRuntime(@BindEventThrowable RuntimeException ex) {
-      // handles RuntimeException and subclasses
-  }
+  public void onRuntime(@BindEventThrowable RuntimeException ex) { /* more specific */ }
 
   @OnFlowFailure("checkout")
-  public void onIllegalArg(@BindEventThrowable IllegalArgumentException ex) {
-      // most specific — wins if exception is IllegalArgumentException
-  }
+  public void onIllegalArg(@BindEventThrowable IllegalArgumentException ex) { /* most specific */ }
 }
 ```
 
 *If a `new IllegalArgumentException("bad input")` occurs:*
 → Only `onIllegalArg` is invoked.
-The dispatcher prefers the **most specific type match**.
-
----
+Dispatcher always prefers the **most specific throwable binding**.
 
 ### Global fallback
 
@@ -249,7 +184,7 @@ public class GuardedReceiver {
 
 ```java
 @EventReceiver
-@OnEventLifecycle(ROOT_FLOW_FINISHED)
+@OnFlowLifecycle(ROOT_FLOW_FINISHED)
 public class RootBatchReceiver {
   @OnFlowCompleted("rootFlow")
   public void onRoot(List<TelemetryHolder> flows) { /* batch */ }
@@ -284,7 +219,7 @@ Save values (push annotations or telemetry.put*)
   ↓
 Emit event
   ↓
-Dispatcher: class lifecycle filter → scope → name → outcome
+Dispatcher: lifecycle filter → scope → name → outcome
   ↓
 Flow Started:
    └── @OnFlowStarted
@@ -292,11 +227,11 @@ Flow Started:
 Flow Finished:
    ├── SUCCESS
    │     ├─ @OnFlowSuccess (non-root)
-   │     └─ eligible @OnFlowCompleted(@OnOutcome=SUCCESS or none)
+   │     └─ @OnFlowCompleted(@OnOutcome=SUCCESS or none)
    │
    └── FAILURE
          ├─ @OnFlowFailure (non-root, most-specific throwable binding wins)
-         └─ eligible @OnFlowCompleted(@OnOutcome=FAILURE or none)
+         └─ @OnFlowCompleted(@OnOutcome=FAILURE or none)
   ↓
 “Always” = @OnFlowCompleted without @OnOutcome
   ↓
@@ -311,7 +246,7 @@ Attributes saved; context discarded at scope end
 
 ```
 Event arrives →
-   Lifecycle filter (@OnEventLifecycle)
+   Lifecycle filter (@OnFlowLifecycle / @OnAllLifecycles)
    → Scope filter (@OnEventScope)
    → Name match (dot-chop, blank terminator)
    → Outcome path:
@@ -323,9 +258,6 @@ Event arrives →
    → If no match:
         @OnFlowNotMatched / @GlobalFlowFallback
 ```
-
----
-
 ## OTEL `SpanKind` Diagram
 
 ```
@@ -364,4 +296,3 @@ CONSUMER    PRODUCER
 * **Throwable missing** → Only present in failure events.
 
 ---
-    

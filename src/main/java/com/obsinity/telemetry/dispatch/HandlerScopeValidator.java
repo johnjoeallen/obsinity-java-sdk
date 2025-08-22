@@ -1,8 +1,8 @@
-// src/main/java/com/obsinity/telemetry/dispatch/HandlerScopeValidator.java
 package com.obsinity.telemetry.dispatch;
 
 import java.lang.reflect.Method;
-import java.util.*;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.aop.support.AopUtils;
@@ -13,17 +13,15 @@ import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.stereotype.Component;
 
-import com.obsinity.telemetry.model.Lifecycle;
-
-// NEW annotations (flow-centric)
 import com.obsinity.telemetry.annotations.EventReceiver;
+import com.obsinity.telemetry.annotations.OnFlowLifecycle;
 import com.obsinity.telemetry.annotations.OnEventScope;
-import com.obsinity.telemetry.annotations.OnEventLifecycle;
+import com.obsinity.telemetry.annotations.OnFlowCompleted;
+import com.obsinity.telemetry.annotations.OnFlowFailure;
+import com.obsinity.telemetry.annotations.OnFlowNotMatched;
 import com.obsinity.telemetry.annotations.OnFlowStarted;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
-import com.obsinity.telemetry.annotations.OnFlowFailure;
-import com.obsinity.telemetry.annotations.OnFlowCompleted;
-import com.obsinity.telemetry.annotations.OnFlowNotMatched;
+import com.obsinity.telemetry.model.Lifecycle;
 
 @Component
 public class HandlerScopeValidator implements SmartInitializingSingleton {
@@ -44,33 +42,32 @@ public class HandlerScopeValidator implements SmartInitializingSingleton {
 
 			// Class-level scopes (merged & repeatable) — these return Set, not List
 			Set<OnEventScope> scopes =
-				AnnotatedElementUtils.getMergedRepeatableAnnotations(userClass, OnEventScope.class);
-			Set<OnEventLifecycle> lifecyclesAnn =
-				AnnotatedElementUtils.getMergedRepeatableAnnotations(userClass, OnEventLifecycle.class);
+					AnnotatedElementUtils.getMergedRepeatableAnnotations(userClass, OnEventScope.class);
+			Set<OnFlowLifecycle> lifecyclesAnn =
+					AnnotatedElementUtils.getMergedRepeatableAnnotations(userClass, OnFlowLifecycle.class);
 
 			// Flatten class-level scope config
 			Set<String> scopePrefixes = scopes.stream()
-				.map(a -> firstNonBlank(a.value()))
-				.filter(s -> !s.isBlank())
-				.collect(Collectors.toSet());
+					.map(a -> firstNonBlank(a.value()))
+					.filter(s -> !s.isBlank())
+					.collect(Collectors.toSet());
 
 			Set<Lifecycle> scopeLifecycles = lifecyclesAnn.stream()
-				.flatMap(a -> {
-					Object v = AnnotationUtils.getValue(a, "value");
-					if (v instanceof Lifecycle lc) {
-						return java.util.stream.Stream.of(lc);
-					} else if (v instanceof Lifecycle[] arr) {
-						return java.util.Arrays.stream(arr);
-					} else {
-						return java.util.stream.Stream.<Lifecycle>empty();
-					}
-				})
-				.collect(Collectors.toSet());
+					.flatMap(a -> {
+						Object v = AnnotationUtils.getValue(a, "value");
+						if (v instanceof Lifecycle lc) {
+							return java.util.stream.Stream.of(lc);
+						} else if (v instanceof Lifecycle[] arr) {
+							return java.util.Arrays.stream(arr);
+						} else {
+							return java.util.stream.Stream.<Lifecycle>empty();
+						}
+					})
+					.collect(Collectors.toSet());
 
 			// Validate method-level annotations
 			for (Method m : userClass.getMethods()) {
-				boolean hasAnyFlow =
-					m.isAnnotationPresent(OnFlowStarted.class)
+				boolean hasAnyFlow = m.isAnnotationPresent(OnFlowStarted.class)
 						|| m.isAnnotationPresent(OnFlowSuccess.class)
 						|| m.isAnnotationPresent(OnFlowFailure.class)
 						|| m.isAnnotationPresent(OnFlowCompleted.class);
@@ -80,9 +77,8 @@ public class HandlerScopeValidator implements SmartInitializingSingleton {
 				// Misuse: cannot mix @OnFlow* with @OnFlowNotMatched on the same method
 				if (hasAnyFlow && hasNotMatched) {
 					throw new BeanCreationException(
-						beanName,
-						err(userClass, m)
-							+ "cannot have both @OnFlow* and @OnFlowNotMatched on the same method.");
+							beanName,
+							err(userClass, m) + "cannot have both @OnFlow* and @OnFlowNotMatched on the same method.");
 				}
 
 				// Validate each @OnFlow* method against class-level scope
@@ -113,21 +109,21 @@ public class HandlerScopeValidator implements SmartInitializingSingleton {
 	}
 
 	private static void validateFlowAgainstScope(
-		String beanName,
-		Class<?> userClass,
-		Method m,
-		String eventName,
-		Set<String> scopePrefixes,
-		Set<Lifecycle> scopeLifecycles) {
+			String beanName,
+			Class<?> userClass,
+			Method m,
+			String eventName,
+			Set<String> scopePrefixes,
+			Set<Lifecycle> scopeLifecycles) {
 
 		if (!scopePrefixes.isEmpty()) {
 			boolean ok = scopePrefixes.stream().anyMatch(p -> eventName != null && eventName.startsWith(p));
 			if (!ok) {
 				throw new BeanCreationException(
-					beanName,
-					err(userClass, m)
-						+ "flow name outside component @OnEventScope prefixes. "
-						+ "Scope=" + scopePrefixes + ", method name='" + eventName + "'.");
+						beanName,
+						err(userClass, m)
+								+ "flow name outside component @OnEventScope prefixes. "
+								+ "Scope=" + scopePrefixes + ", method name='" + eventName + "'.");
 			}
 		}
 
