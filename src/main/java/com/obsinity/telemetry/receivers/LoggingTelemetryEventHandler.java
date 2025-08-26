@@ -22,10 +22,10 @@ public class LoggingTelemetryEventHandler {
 	@OnFlowNotMatched
 	public void onComponentUnmatched(TelemetryHolder h, Lifecycle phase) {
 		if (h == null) {
-			log.info("component-unmatched: holder=null phase={}", phase);
+			log.debug("component-unmatched: holder=null phase={}", phase);
 			return;
 		}
-		log.info(
+		log.debug(
 				"component-unmatched event={} phase={} traceId={} spanId={} failed={}",
 				safe(h.name()),
 				phase,

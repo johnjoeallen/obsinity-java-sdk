@@ -20,6 +20,7 @@
     <properties>
         <java.version>17</java.version>
 
+        <!-- Libraries -->
         <spring.boot.version>3.5.4</spring.boot.version>
         <otel.version>1.53.0</otel.version>
         <jackson.version>2.19.2</jackson.version>
@@ -27,11 +28,25 @@
         <slf4j.version>2.0.17</slf4j.version>
         <aspectjrt.version>1.9.24</aspectjrt.version>
         <lombok.version>1.18.38</lombok.version>
+
+        <!-- Java compilation -->
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
 
+        <!-- Formatting -->
         <spotless-maven-plugin.version>2.43.0</spotless-maven-plugin.version>
         <spotless-palantir-maven-plugin.version>2.59.0</spotless-palantir-maven-plugin.version>
+
+        <!-- Mutation Testing -->
+        <pitest.version>1.17.0</pitest.version>
+        <pitest.junit5.version>1.2.1</pitest.junit5.version>
+
+        <!-- JUnit (aligned to avoid PIT launcher mismatch) -->
+        <junit.jupiter.version>5.11.3</junit.jupiter.version>
+        <junit.platform.version>1.11.3</junit.platform.version>
+
+        <!-- Test plugins -->
+        <maven.surefire.plugin.version>3.2.5</maven.surefire.plugin.version>
     </properties>
 
     <build>
@@ -79,8 +94,7 @@
                         <includes>
                             <include>src/**/*.yaml</include>
                         </includes>
-                        <excludes>
-                        </excludes>
+                        <excludes/>
                         <jackson/>
                     </yaml>
                 </configuration>
@@ -183,15 +197,121 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Tests -->
+        <!-- Tests (Spring Boot starter brings JUnit etc., but we pin these to align for PIT) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <version>${junit.jupiter.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <version>${junit.platform.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <profiles>
+        <!-- Activate with: mvn -Ppitest clean verify -->
+        <profile>
+            <id>pitest</id>
+            <build>
+                <plugins>
+                    <!-- Keep normal test runs sane (JPMS off) -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <version>${maven.surefire.plugin.version}</version>
+                        <configuration>
+                            <useModulePath>false</useModulePath>
+                        </configuration>
+                    </plugin>
+
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                        <version>${pitest.version}</version>
+                        <configuration>
+                            <coverageThreshold>100</coverageThreshold>
+                            <mutationThreshold>90</mutationThreshold>
+
+                            <!-- Verbose to expose real causes if anything breaks -->
+                            <verbose>true</verbose>
+
+                            <!-- Common JPMS opens for JDK17+ with Spring/Mockito/ByteBuddy -->
+                            <jvmArgs>
+                                <jvmArg>--add-opens=java.base/java.lang=ALL-UNNAMED</jvmArg>
+                                <jvmArg>--add-opens=java.base/java.lang.invoke=ALL-UNNAMED</jvmArg>
+                                <jvmArg>--add-opens=java.base/java.util=ALL-UNNAMED</jvmArg>
+                                <jvmArg>--add-opens=java.base/java.time=ALL-UNNAMED</jvmArg>
+                            </jvmArgs>
+
+                            <!-- Avoid long classpath issues -->
+                            <useClasspathJar>true</useClasspathJar>
+
+                            <!-- Target what to mutate -->
+                            <targetClasses>
+                                <param>com.obsinity.telemetry.*</param>
+                            </targetClasses>
+                            <targetTests>
+                                <param>com.obsinity.telemetry.*Test</param>
+                                <param>com.obsinity.telemetry.*Tests</param>
+                            </targetTests>
+
+                            <mutators>
+                                <mutator>STRONGER</mutator>
+                            </mutators>
+
+                            <threads>4</threads>
+                            <timeoutConst>8000</timeoutConst>
+                            <outputFormats>
+                                <param>HTML</param>
+                                <param>XML</param>
+                            </outputFormats>
+
+                            <!-- Uncomment if you want to exclude wiring/generated/config -->
+                            <!--
+                            <excludedClasses>
+                                <param>com.obsinity.telemetry.config.*</param>
+                                <param>com.obsinity.telemetry.generated.*</param>
+                            </excludedClasses>
+                            -->
+                        </configuration>
+                        <dependencies>
+                            <!-- JUnit 5 integration for PIT -->
+                            <dependency>
+                                <groupId>org.pitest</groupId>
+                                <artifactId>pitest-junit5-plugin</artifactId>
+                                <version>${pitest.junit5.version}</version>
+                                <!-- If a stray launcher still leaks in, you can exclude it:
+                                <exclusions>
+                                    <exclusion>
+                                        <groupId>org.junit.platform</groupId>
+                                        <artifactId>junit-platform-launcher</artifactId>
+                                    </exclusion>
+                                </exclusions>
+                                -->
+                            </dependency>
+                        </dependencies>
+                        <executions>
+                            <execution>
+                                <id>mutation-testing</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>mutationCoverage</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 
 </project>

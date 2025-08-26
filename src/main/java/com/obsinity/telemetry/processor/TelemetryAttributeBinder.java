@@ -21,13 +21,12 @@ import com.obsinity.telemetry.model.TelemetryHolder;
 /**
  * Producer-side parameter binder.
  *
- * <p>Writes method parameters into:
- * - a {@link TelemetryHolder}'s attributes/context (via {@link #bind(TelemetryHolder, ProceedingJoinPoint)})
- * - a provided {@link OAttributes} instance (via {@link #bind(OAttributes, ProceedingJoinPoint)})
+ * <p>Writes method parameters into: - a {@link TelemetryHolder}'s attributes/context (via {@link #bind(TelemetryHolder,
+ * ProceedingJoinPoint)}) - a provided {@link OAttributes} instance (via {@link #bind(OAttributes,
+ * ProceedingJoinPoint)})
  *
- * <p>Supported annotations:
- * - {@link PushAttribute}: attributes[key] = arg (skips null when omitIfNull=true)
- * - {@link PushContextValue}: eventContext[key] = arg
+ * <p>Supported annotations: - {@link PushAttribute}: attributes[key] = arg (skips null when omitIfNull=true) -
+ * {@link PushContextValue}: eventContext[key] = arg
  */
 @Component
 public class TelemetryAttributeBinder {
@@ -197,8 +196,8 @@ public class TelemetryAttributeBinder {
 	// ---------------- robust method resolution ----------------
 
 	/**
-	 * Resolve the concrete target method (handling proxies/bridge methods), preferring one that actually
-	 * has parameter annotations like {@link PushAttribute} / {@link PushContextValue}.
+	 * Resolve the concrete target method (handling proxies/bridge methods), preferring one that actually has parameter
+	 * annotations like {@link PushAttribute} / {@link PushContextValue}.
 	 */
 	private static Method resolveMethodWithAnnotations(ProceedingJoinPoint pjp) {
 		MethodSignature sig = (MethodSignature) pjp.getSignature();
@@ -239,8 +238,8 @@ public class TelemetryAttributeBinder {
 			// also scan for bridge methods by name/arity
 			for (Method cand : c.getDeclaredMethods()) {
 				if (cand.getName().equals(name)
-					&& cand.getParameterCount() == params.length
-					&& (cand.isBridge() || cand.isSynthetic())) {
+						&& cand.getParameterCount() == params.length
+						&& (cand.isBridge() || cand.isSynthetic())) {
 					cand.setAccessible(true);
 					return cand;
 				}

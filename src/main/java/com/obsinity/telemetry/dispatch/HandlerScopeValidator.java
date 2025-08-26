@@ -14,10 +14,10 @@ import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.stereotype.Component;
 
 import com.obsinity.telemetry.annotations.EventReceiver;
-import com.obsinity.telemetry.annotations.OnFlowLifecycle;
 import com.obsinity.telemetry.annotations.OnEventScope;
 import com.obsinity.telemetry.annotations.OnFlowCompleted;
 import com.obsinity.telemetry.annotations.OnFlowFailure;
+import com.obsinity.telemetry.annotations.OnFlowLifecycle;
 import com.obsinity.telemetry.annotations.OnFlowNotMatched;
 import com.obsinity.telemetry.annotations.OnFlowStarted;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;

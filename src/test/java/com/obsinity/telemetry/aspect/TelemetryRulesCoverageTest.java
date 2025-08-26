@@ -5,54 +5,109 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
-import java.util.*;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 
-import io.opentelemetry.api.trace.SpanKind;
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.context.annotation.*;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
-import com.obsinity.telemetry.annotations.*;
+import io.opentelemetry.api.trace.SpanKind;
+import com.obsinity.telemetry.annotations.BindEventThrowable;
+import com.obsinity.telemetry.annotations.EventReceiver;
+import com.obsinity.telemetry.annotations.Flow;
+import com.obsinity.telemetry.annotations.GlobalFlowFallback;
+import com.obsinity.telemetry.annotations.Kind;
+import com.obsinity.telemetry.annotations.OnEventScope;
+import com.obsinity.telemetry.annotations.OnFlowCompleted;
+import com.obsinity.telemetry.annotations.OnFlowFailure;
+import com.obsinity.telemetry.annotations.OnFlowLifecycle;
+import com.obsinity.telemetry.annotations.OnFlowNotMatched;
+import com.obsinity.telemetry.annotations.OnFlowSuccess;
+import com.obsinity.telemetry.annotations.OnOutcome;
+import com.obsinity.telemetry.annotations.Outcome;
+import com.obsinity.telemetry.annotations.PullAttribute;
+import com.obsinity.telemetry.annotations.PullContextValue;
+import com.obsinity.telemetry.annotations.PushAttribute;
+import com.obsinity.telemetry.annotations.PushContextValue;
+import com.obsinity.telemetry.annotations.Step;
 import com.obsinity.telemetry.dispatch.HandlerGroup;
 import com.obsinity.telemetry.dispatch.TelemetryEventHandlerScanner;
-import com.obsinity.telemetry.model.*;
-import com.obsinity.telemetry.processor.*;
+import com.obsinity.telemetry.model.Lifecycle;
+import com.obsinity.telemetry.model.OAttributes;
+import com.obsinity.telemetry.model.OEvent;
+import com.obsinity.telemetry.model.TelemetryHolder;
+import com.obsinity.telemetry.processor.AttributeParamExtractor;
+import com.obsinity.telemetry.processor.TelemetryAttributeBinder;
+import com.obsinity.telemetry.processor.TelemetryContext;
+import com.obsinity.telemetry.processor.TelemetryProcessor;
+import com.obsinity.telemetry.processor.TelemetryProcessorSupport;
 import com.obsinity.telemetry.receivers.TelemetryDispatchBus;
 
 @TelemetryBootSuite(
-	classes = TelemetryRulesCoverageTest.TestApp.class,
-	properties = "spring.main.web-application-type=none"
-)
+		classes = TelemetryRulesCoverageTest.TestApp.class,
+		properties = "spring.main.web-application-type=none")
 @DisplayName("End‑to‑end rules coverage (scopes, lifecycles, outcomes, fallbacks, binding, specificity)")
 class TelemetryRulesCoverageTest {
 
 	/* ===================== Test wiring (isolated per suite) ===================== */
 
 	@Configuration(proxyBeanMethods = false)
-	@EnableAutoConfiguration(exclude = { com.obsinity.telemetry.configuration.AutoConfiguration.class })
+	@EnableAutoConfiguration(exclude = {com.obsinity.telemetry.configuration.AutoConfiguration.class})
 	@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
 	static class TestApp {
-		@Bean com.fasterxml.jackson.databind.ObjectMapper objectMapper() { return new com.fasterxml.jackson.databind.ObjectMapper(); }
-		@Bean AttributeParamExtractor attributeParamExtractor() { return new AttributeParamExtractor(); }
-		@Bean TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor ex) { return new TelemetryAttributeBinder(ex); }
-		@Bean TelemetryProcessorSupport telemetryProcessorSupport() { return new TelemetryProcessorSupport(); }
-		@Bean TelemetryContext telemetryContext(TelemetryProcessorSupport support) { return new TelemetryContext(support); }
+		@Bean
+		com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
+			return new com.fasterxml.jackson.databind.ObjectMapper();
+		}
 
-		@Bean List<HandlerGroup> handlerGroups(ListableBeanFactory bf, TelemetryProcessorSupport support) {
+		@Bean
+		AttributeParamExtractor attributeParamExtractor() {
+			return new AttributeParamExtractor();
+		}
+
+		@Bean
+		TelemetryAttributeBinder telemetryAttributeBinder(AttributeParamExtractor ex) {
+			return new TelemetryAttributeBinder(ex);
+		}
+
+		@Bean
+		TelemetryProcessorSupport telemetryProcessorSupport() {
+			return new TelemetryProcessorSupport();
+		}
+
+		@Bean
+		TelemetryContext telemetryContext(TelemetryProcessorSupport support) {
+			return new TelemetryContext(support);
+		}
+
+		@Bean
+		List<HandlerGroup> handlerGroups(ListableBeanFactory bf, TelemetryProcessorSupport support) {
 			return new TelemetryEventHandlerScanner(bf, support).handlerGroups();
 		}
-		@Bean TelemetryDispatchBus telemetryDispatchBus(List<HandlerGroup> groups) { return new TelemetryDispatchBus(groups); }
 
-		@Bean TelemetryProcessor telemetryProcessor(
-			TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
+		@Bean
+		TelemetryDispatchBus telemetryDispatchBus(List<HandlerGroup> groups) {
+			return new TelemetryDispatchBus(groups);
+		}
+
+		@Bean
+		TelemetryProcessor telemetryProcessor(
+				TelemetryAttributeBinder binder, TelemetryProcessorSupport support, TelemetryDispatchBus bus) {
 			return new TelemetryProcessor(binder, support, bus) {
-				@Override protected OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
-					Map<String,Object> m = new LinkedHashMap<>();
+				@Override
+				protected OAttributes buildAttributes(org.aspectj.lang.ProceedingJoinPoint pjp, FlowOptions opts) {
+					Map<String, Object> m = new LinkedHashMap<>();
 					m.put("test.flow", opts.name());
 					m.put("declaring.class", pjp.getSignature().getDeclaringTypeName());
 					m.put("declaring.method", pjp.getSignature().getName());
@@ -64,14 +119,41 @@ class TelemetryRulesCoverageTest {
 				}
 			};
 		}
-		@Bean TelemetryAspect telemetryAspect(TelemetryProcessor p) { return new TelemetryAspect(p); }
 
-		@Bean Flows flows(TelemetryContext t) { return new Flows(t); }
-		@Bean OrdersReceiver ordersReceiver() { return new OrdersReceiver(); }
-		@Bean OrdersPaymentsReceiver ordersPaymentsReceiver() { return new OrdersPaymentsReceiver(); }
-		@Bean UnscopedControl unscopedControl() { return new UnscopedControl(); }
-		@Bean RootBatchReceiver rootBatchReceiver() { return new RootBatchReceiver(); }
-		@Bean GlobalFallback fallback() { return new GlobalFallback(); }
+		@Bean
+		TelemetryAspect telemetryAspect(TelemetryProcessor p) {
+			return new TelemetryAspect(p);
+		}
+
+		@Bean
+		Flows flows(TelemetryContext t) {
+			return new Flows(t);
+		}
+
+		@Bean
+		OrdersReceiver ordersReceiver() {
+			return new OrdersReceiver();
+		}
+
+		@Bean
+		OrdersPaymentsReceiver ordersPaymentsReceiver() {
+			return new OrdersPaymentsReceiver();
+		}
+
+		@Bean
+		UnscopedControl unscopedControl() {
+			return new UnscopedControl();
+		}
+
+		@Bean
+		RootBatchReceiver rootBatchReceiver() {
+			return new RootBatchReceiver();
+		}
+
+		@Bean
+		GlobalFallback fallback() {
+			return new GlobalFallback();
+		}
 	}
 
 	/* ============================= Flows under test ============================= */
@@ -79,11 +161,13 @@ class TelemetryRulesCoverageTest {
 	@Kind(SpanKind.SERVER)
 	static class Flows {
 		private final TelemetryContext telemetry;
-		Flows(TelemetryContext t) { this.telemetry = t; }
+
+		Flows(TelemetryContext t) {
+			this.telemetry = t;
+		}
 
 		@Flow(name = "orders.create")
-		public void ordersCreateOk(@PushAttribute("order.id") String id,
-								   @PushContextValue("tenant") String tenant) {
+		public void ordersCreateOk(@PushAttribute("order.id") String id, @PushContextValue("tenant") String tenant) {
 			telemetry.putAttr("amount", BigDecimal.TEN);
 		}
 
@@ -93,20 +177,23 @@ class TelemetryRulesCoverageTest {
 		}
 
 		@Flow(name = "orders.invoice")
-		public void ordersInvoiceFail() { throw new IllegalStateException("inv oops"); }
+		public void ordersInvoiceFail() {
+			throw new IllegalStateException("inv oops");
+		}
 
 		@Flow(name = "payments.charge")
-		public void paymentsChargeOk() { /* success */ }
+		public void paymentsChargeOk() {
+			/* success */
+		}
 
 		@Flow(name = "rootFlow")
 		public void rootFlow() {
-			((Flows)AopContext.currentProxy()).nested();
-			((Flows)AopContext.currentProxy()).subFlow();
+			((Flows) AopContext.currentProxy()).nested();
+			((Flows) AopContext.currentProxy()).subFlow();
 		}
 
 		@Flow(name = "subFlow")
-		public void subFlow() {
-		}
+		public void subFlow() {}
 
 		@Step(name = "nested")
 		public void nested() {
@@ -116,7 +203,9 @@ class TelemetryRulesCoverageTest {
 
 		@Kind(SpanKind.PRODUCER)
 		@Step(name = "lonelyStep")
-		public void lonelyStep() { /* promoted */ }
+		public void lonelyStep() {
+			/* promoted */
+		}
 	}
 
 	/* ============================== Receivers (scoped) ============================== */
@@ -132,9 +221,8 @@ class TelemetryRulesCoverageTest {
 		final List<TelemetryHolder> componentUnmatched = new CopyOnWriteArrayList<>();
 
 		@OnFlowSuccess(name = "orders.create")
-		public void onCreateOk(@PullAttribute("order.id") String id,
-							   @PullContextValue("tenant") String tenant,
-							   TelemetryHolder h) {
+		public void onCreateOk(
+				@PullAttribute("order.id") String id, @PullContextValue("tenant") String tenant, TelemetryHolder h) {
 			success.add(h);
 			assertThat(id).isNotBlank();
 			assertThat(tenant).isNotBlank();
@@ -166,7 +254,9 @@ class TelemetryRulesCoverageTest {
 		}
 
 		@OnFlowNotMatched
-		public void unmatched(TelemetryHolder h) { componentUnmatched.add(h); }
+		public void unmatched(TelemetryHolder h) {
+			componentUnmatched.add(h);
+		}
 	}
 
 	@EventReceiver
@@ -177,10 +267,14 @@ class TelemetryRulesCoverageTest {
 		final List<String> seen = new CopyOnWriteArrayList<>();
 
 		@OnFlowSuccess(name = "orders.create")
-		public void s1(TelemetryHolder h) { seen.add(h.name()); }
+		public void s1(TelemetryHolder h) {
+			seen.add(h.name());
+		}
 
 		@OnFlowSuccess(name = "payments.charge")
-		public void s2(TelemetryHolder h) { seen.add(h.name()); }
+		public void s2(TelemetryHolder h) {
+			seen.add(h.name());
+		}
 	}
 
 	/** Unscoped “control” to assert the event exists regardless of component scopes. */
@@ -188,26 +282,38 @@ class TelemetryRulesCoverageTest {
 	@OnFlowLifecycle(Lifecycle.FLOW_FINISHED)
 	static class UnscopedControl {
 		final List<String> successes = new CopyOnWriteArrayList<>();
-		final List<String> failures  = new CopyOnWriteArrayList<>();
+		final List<String> failures = new CopyOnWriteArrayList<>();
 
 		@OnFlowSuccess(name = "orders.create")
-		public void ok1(TelemetryHolder h) { successes.add(h.name()); }
+		public void ok1(TelemetryHolder h) {
+			successes.add(h.name());
+		}
 
 		@OnFlowSuccess(name = "payments.charge")
-		public void ok2(TelemetryHolder h) { successes.add(h.name()); }
+		public void ok2(TelemetryHolder h) {
+			successes.add(h.name());
+		}
 
 		@OnFlowSuccess(name = "lonelyStep")
-		public void lonelyStep(TelemetryHolder h) { successes.add(h.name()); }
+		public void lonelyStep(TelemetryHolder h) {
+			successes.add(h.name());
+		}
 
 		@OnFlowFailure(name = "orders.create")
-		public void f1(@BindEventThrowable Exception e, TelemetryHolder h) { failures.add(h.name()); }
+		public void f1(@BindEventThrowable Exception e, TelemetryHolder h) {
+			failures.add(h.name());
+		}
 
 		@OnFlowFailure(name = "orders.invoice")
-		public void f2(@BindEventThrowable Exception e, TelemetryHolder h) { failures.add(h.name()); }
+		public void f2(@BindEventThrowable Exception e, TelemetryHolder h) {
+			failures.add(h.name());
+		}
 
 		@OnFlowCompleted(name = "flowWithNoSuchName") // never matched; ensures no accidental global noise
 		@OnOutcome(Outcome.SUCCESS)
-		public void never(TelemetryHolder h) { throw new AssertionError("should never happen"); }
+		public void never(TelemetryHolder h) {
+			throw new AssertionError("should never happen");
+		}
 	}
 
 	/** Root batch demo + lonelyStep start/finish coverage. */
@@ -217,10 +323,14 @@ class TelemetryRulesCoverageTest {
 		final List<List<TelemetryHolder>> batches = new CopyOnWriteArrayList<>();
 
 		@OnFlowSuccess(name = "lonelyStep")
-		public void lonelyStep(List<TelemetryHolder> flows) { batches.add(flows); }
+		public void lonelyStep(List<TelemetryHolder> flows) {
+			batches.add(flows);
+		}
 
 		@OnFlowCompleted(name = "rootFlow")
-		public void rootDone(List<TelemetryHolder> flows) { batches.add(flows); }
+		public void rootDone(List<TelemetryHolder> flows) {
+			batches.add(flows);
+		}
 	}
 
 	/** Global fallback: only runs if NO receiver matched AND no component‑unmatched fired. */
@@ -229,17 +339,30 @@ class TelemetryRulesCoverageTest {
 		final List<TelemetryHolder> all = new CopyOnWriteArrayList<>();
 
 		@OnFlowNotMatched
-		public void any(TelemetryHolder h) { all.add(h); }
+		public void any(TelemetryHolder h) {
+			all.add(h);
+		}
 	}
 
 	/* ================================ WIRING ================================ */
 
-	@Autowired Flows flows;
-	@Autowired OrdersReceiver orders;
-	@Autowired OrdersPaymentsReceiver op;
-	@Autowired UnscopedControl control;
-	@Autowired RootBatchReceiver root;
-	@Autowired GlobalFallback global;
+	@Autowired
+	Flows flows;
+
+	@Autowired
+	OrdersReceiver orders;
+
+	@Autowired
+	OrdersPaymentsReceiver op;
+
+	@Autowired
+	UnscopedControl control;
+
+	@Autowired
+	RootBatchReceiver root;
+
+	@Autowired
+	GlobalFallback global;
 
 	@BeforeEach
 	void reset() {
@@ -274,8 +397,7 @@ class TelemetryRulesCoverageTest {
 	@Test
 	@DisplayName("FAILURE path: most-specific failure handler chosen; generic not invoked")
 	void failure_specificity_and_failure_only() {
-		assertThatThrownBy(() -> flows.ordersInvoiceFail())
-			.isInstanceOf(IllegalStateException.class);
+		assertThatThrownBy(() -> flows.ordersInvoiceFail()).isInstanceOf(IllegalStateException.class);
 
 		assertThat(orders.mostSpecificFailures).hasSize(1);
 		// Control saw a failure
@@ -288,8 +410,8 @@ class TelemetryRulesCoverageTest {
 	@DisplayName("Failure with different type routes to matching @OnFlowFailure; success handlers suppressed")
 	void failure_basic() {
 		assertThatThrownBy(() -> flows.ordersCreateFail("O-2"))
-			.isInstanceOf(IllegalArgumentException.class)
-			.hasMessageContaining("bad create");
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("bad create");
 
 		assertThat(orders.failure).hasSize(1);
 		assertThat(orders.success).isEmpty();
@@ -325,7 +447,10 @@ class TelemetryRulesCoverageTest {
 
 		// step wrote attributes/context
 		TelemetryHolder rootH = batch.get(0);
-		OEvent nested = rootH.events().stream().filter(e -> "nested".equals(e.name())).findFirst().orElseThrow();
+		OEvent nested = rootH.events().stream()
+				.filter(e -> "nested".equals(e.name()))
+				.findFirst()
+				.orElseThrow();
 		assertThat(nested.attributes().map()).containsEntry("step.answer", 42);
 		assertThat(nested.eventContext()).containsEntry("step.ctx", "yes");
 	}
@@ -335,7 +460,8 @@ class TelemetryRulesCoverageTest {
 	void lonely_step_auto_promoted() {
 		flows.lonelyStep();
 		// We don't have explicit lonely step handlers here; this just ensures no crashes and promotion works.
-		// Control doesn’t see lonely step because it has no matching @OnFlow* handlers in this test suite — which is fine.
+		// Control doesn’t see lonely step because it has no matching @OnFlow* handlers in this test suite — which is
+		// fine.
 		assertThat(global.all).isEmpty(); // should not be treated as unmatched globally
 	}
 

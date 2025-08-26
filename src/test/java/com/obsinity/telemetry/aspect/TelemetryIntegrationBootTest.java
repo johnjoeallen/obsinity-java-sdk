@@ -9,7 +9,6 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 
-import com.obsinity.telemetry.annotations.OnAllLifecycles;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,6 +27,7 @@ import com.obsinity.telemetry.annotations.EventReceiver;
 import com.obsinity.telemetry.annotations.Flow;
 import com.obsinity.telemetry.annotations.GlobalFlowFallback;
 import com.obsinity.telemetry.annotations.Kind;
+import com.obsinity.telemetry.annotations.OnAllLifecycles;
 import com.obsinity.telemetry.annotations.OnFlowFailure;
 import com.obsinity.telemetry.annotations.OnFlowNotMatched;
 import com.obsinity.telemetry.annotations.OnFlowSuccess;
@@ -319,7 +319,7 @@ class TelemetryIntegrationBootTest {
 		assertThat(start.parentSpanId()).isNull();
 
 		Map<String, Object> attrs = start.attributes().map();
-		log.info("lonelyStep attributes: {}", attrs);
+		log.debug("lonelyStep attributes: {}", attrs);
 		assertThat(attrs).containsEntry("test.flow", "lonelyStep").containsEntry("declaring.method", "lonelyStep");
 		assertThat(attrs.get("custom.tag")).isInstanceOf(CustomTag.class);
 		assertThat(((CustomTag) attrs.get("custom.tag")).value()).isEqualTo("integration");
@@ -334,7 +334,7 @@ class TelemetryIntegrationBootTest {
 		assertThat(h.kind()).isEqualTo(SpanKind.CLIENT);
 
 		Map<String, Object> attrs = h.attributes().map();
-		log.info("flowClient attributes: {}", attrs);
+		log.debug("flowClient attributes: {}", attrs);
 		assertThat(attrs).containsEntry("test.flow", "flowClient").containsEntry("declaring.method", "flowClient");
 	}
 
@@ -345,7 +345,7 @@ class TelemetryIntegrationBootTest {
 
 		assertThat(fallback.rootBatches).hasSize(1);
 		List<TelemetryHolder> batch = fallback.rootBatches.get(0);
-		log.info(
+		log.debug(
 				"rootFlow batch (size={}): {}",
 				batch.size(),
 				batch.stream().map(TelemetryHolder::name).toList());
@@ -361,8 +361,8 @@ class TelemetryIntegrationBootTest {
 
 		Map<String, Object> firstAttrs = first.attributes().map();
 		Map<String, Object> secondAttrs = second.attributes().map();
-		log.info("rootFlow attrs: {}", firstAttrs);
-		log.info("nestedFlow attrs: {}", secondAttrs);
+		log.debug("rootFlow attrs: {}", firstAttrs);
+		log.debug("nestedFlow attrs: {}", secondAttrs);
 
 		assertThat(firstAttrs).containsEntry("test.flow", "rootFlow");
 		assertThat(secondAttrs).containsEntry("test.flow", "nestedFlow");
