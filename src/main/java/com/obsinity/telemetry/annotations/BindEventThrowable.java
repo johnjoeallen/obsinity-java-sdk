@@ -14,10 +14,8 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
 public @interface BindEventThrowable {
-
 	/** If true and the selected throwable (per {@link #source()}) is missing, treat this as a binding error. */
 	boolean required() default false;
-
 	/**
 	 * Which throwable to bind.
 	 *
